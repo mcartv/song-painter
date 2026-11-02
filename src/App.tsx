@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowDownToLine, AudioLines, CircleHelp, Image, Music2, Pause, Play, RotateCcw, SlidersHorizontal, Sparkles, UploadCloud, Volume2, X } from 'lucide-react'
+import { ArrowDownToLine, Image, Music2, Pause, Play, RotateCcw, SlidersHorizontal, Sparkles, UploadCloud, Volume2 } from 'lucide-react'
 
 import type { PaintingStyle } from './types/studio';
 import { palettes } from './lib/palettes';
+import Header from './components/layout/Header'
+import AboutModal from './components/ui/AboutModal'
 const formatTime = (value: number) => Number.isFinite(value) ? `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, '0')}` : '0:00'
 
 export default function App() {
@@ -139,11 +141,7 @@ export default function App() {
   }
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <div className="brand"><span className="brand-icon"><AudioLines size={21} /></span><span>song<span className="brand-accent">painter</span><span className="brand-dot">.</span></span></div>
-        <nav className="top-nav"><span className="active-link">Studio</span><span className="quiet-link">A little space for sound & color</span></nav>
-        <button className="help-button" onClick={() => setHelp(true)}><CircleHelp size={17} /><span>About</span></button>
-      </header>
+      <Header onAboutClick={() => setHelp(true)} />
       <main className="workspace">
         <div className="workspace-heading"><div><span className="eyebrow"><span className="live-dot" /> YOUR CREATIVE SPACE</span><h1>Make sound <em>visible.</em></h1><p>Let the music move the colors. See where it takes you.</p></div><button className="export-button" onClick={exportImage}><ArrowDownToLine size={17} /> Export artwork</button></div>
         <div className="studio-grid">
@@ -172,7 +170,7 @@ export default function App() {
         </div>
         <footer className="footer"><span><span className="brand-dot">✦</span> An experiment in listening differently.</span><span><SlidersHorizontal size={13} /> PHASE 01 / CREATIVE STUDIO <Image size={13} /></span></footer>
       </main>
-      {help && <div className="modal-backdrop" onMouseDown={() => setHelp(false)}><div role="dialog" aria-modal="true" aria-labelledby="about-title" className="modal" onMouseDown={e => e.stopPropagation()}><button className="modal-close" aria-label="Close" onClick={() => setHelp(false)}><X size={18} /></button><span className="eyebrow">A NOTE ABOUT THIS PROJECT</span><h2 id="about-title">Listen with your eyes.</h2><p>Song Painter is a small creative studio that translates music into glowing generative artwork. Upload an audio file, press play, and experiment with color and movement.</p><p>Files stay in your browser. This is an early frontend prototype; more painting tools and better audio mapping are coming later.</p><button className="modal-action" onClick={() => setHelp(false)}>Back to studio</button></div></div>}
+      {help && <AboutModal onClose={() => setHelp(false)} />}
     </div>
   )
 }
