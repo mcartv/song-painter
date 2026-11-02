@@ -1,7 +1,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent, RefObject } from 'react'
-import { Eraser, Paintbrush, RotateCcw, Sparkles, Trash2 } from 'lucide-react'
+import { Download, Eraser, Paintbrush, RotateCcw, Sparkles, Trash2 } from 'lucide-react'
 
 import type { PaintingStyle } from '../../types/studio'
 import type { AudioFeatures } from '../../lib/audioAnalyzer'
@@ -11,6 +11,7 @@ import { analyzeAudio, SILENT_AUDIO } from '../../lib/audioAnalyzer'
 import { renderPainting } from '../../lib/paintingEngine'
 import { drawBrushStroke } from '../../lib/brushEngine'
 import { palettes } from '../../lib/palettes'
+import { exportArtwork } from '../../lib/exportArtwork'
 
 interface PaintingCanvasProps {
   canvasRef: RefObject<HTMLCanvasElement | null>
@@ -48,6 +49,7 @@ export default function PaintingCanvas({
   const nextStrokeIdRef = useRef(1)
   const audioFeaturesRef = useRef<AudioFeatures>({ ...SILENT_AUDIO })
 
+  const lastFrameRef = useRef(0)
   const paintLayerRef = useRef<HTMLCanvasElement | null>(null)
   const paintDirtyRef = useRef(true)
   const canvasSizeRef = useRef({ width: 0, height: 0, dpr: 1 })
@@ -284,6 +286,7 @@ export default function PaintingCanvas({
       }
 
       ctx.drawImage(paintLayer, 0, 0, width, height)
+      lastFrameRef.current = frame
       animation = requestAnimationFrame(render)
     }
 
@@ -295,6 +298,33 @@ export default function PaintingCanvas({
       paintLayerRef.current = null
     }
   }, [canvasRef, analyserRef])
+
+  const saveHD = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const rect = canvas.getBoundingClientRect()
+    const config = configRef.current
+
+    exportArtwork({
+      width: rect.width,
+      height: rect.height,
+      scale: 2,
+      style: config.style,
+      palette: config.palette,
+      intensity: config.intensity,
+      density: config.density,
+      playing: config.playing,
+      frame: lastFrameRef.current,
+      audio: audioFeaturesRef.current,
+      strokes: [
+        ...strokesRef.current,
+        ...(activeStrokeRef.current
+          ? [activeStrokeRef.current]
+          : []),
+      ],
+    })
+  }
 
   const toolButton = (selected: boolean) => ({
     border: '1px solid rgba(180, 166, 201, 0.28)',
@@ -389,6 +419,16 @@ export default function PaintingCanvas({
           style={toolButton(false)}
         >
           <Trash2 size={15} /> Clear
+        </button>
+
+        <button
+          type="button"
+          onClick={saveHD}
+          style={toolButton(false)}
+          title="Export high-resolution PNG"
+        >
+          <Download size={15} />
+          Save HD
         </button>
       </div>
 
