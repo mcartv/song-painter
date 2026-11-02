@@ -7,6 +7,8 @@ export interface BrushPoint {
 
 export type BrushMode = 'paint' | 'erase'
 
+export type BrushPreset = 'glow' | 'ink' | 'particles'
+
 export interface BrushStroke {
     id: number
     points: BrushPoint[]
@@ -14,4 +16,5 @@ export interface BrushStroke {
     size: number
     opacity: number
     mode?: BrushMode
+    preset?: BrushPreset
 }
