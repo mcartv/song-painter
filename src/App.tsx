@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowDownToLine, Image, Music2, Pause, Play, SlidersHorizontal, Sparkles, UploadCloud, Volume2, X } from 'lucide-react'
 
-import type { PaintingStyle } from './types/studio';
-import { palettes } from './lib/palettes';
+import type { PaintingStyle } from './types/studio'
+import { palettes } from './lib/palettes'
+import { useAudioPlayer } from './hooks/useAudioPlayer'
 import Header from './components/layout/Header'
 import AboutModal from './components/ui/AboutModal'
 import StyleSelector from './components/studio/StyleSelector'
@@ -12,21 +13,28 @@ const formatTime = (value: number) => Number.isFinite(value) ? `${Math.floor(val
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const audioRef = useRef<HTMLAudioElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const ctxRef = useRef<AudioContext | null>(null)
-  const analyserRef = useRef<AnalyserNode | null>(null)
-  const sourceRef = useRef<MediaElementAudioSourceNode | null>(null)
-  const urlRef = useRef<string | null>(null)
-  const [style, setStyle] = useState<PaintingStyle>('Bloom');
+  const [style, setStyle] = useState<PaintingStyle>('Bloom')
   const [palette, setPalette] = useState(0)
   const [intensity, setIntensity] = useState(65)
   const [density, setDensity] = useState(65)
-  const [song, setSong] = useState<string | null>(null)
-  const [playing, setPlaying] = useState(false)
-  const [current, setCurrent] = useState(0)
-  const [duration, setDuration] = useState(0)
-  const [error, setError] = useState('')
+  const {
+    audioRef,
+    inputRef,
+    analyserRef,
+    song,
+    playing,
+    current,
+    duration,
+    error,
+    loadFile,
+    togglePlayback,
+    removeSong,
+    seek,
+    handleTimeUpdate,
+    handleLoadedMetadata,
+    handleEnded,
+    handleAudioError,
+  } = useAudioPlayer()
   const [help, setHelp] = useState(false)
   const configRef = useRef({ style, palette, intensity, density, playing })
   useEffect(() => { configRef.current = { style, palette, intensity, density, playing } }, [style, palette, intensity, density, playing])
@@ -101,42 +109,6 @@ export default function App() {
     return () => { cancelAnimationFrame(animation); observer.disconnect() }
   }, [])
 
-  useEffect(() => () => { if (urlRef.current) URL.revokeObjectURL(urlRef.current); void ctxRef.current?.close() }, [])
-
-  const loadFile = (file?: File) => {
-    if (!file) return
-    const isAudio = file.type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(file.name)
-    if (!isAudio) { setError('Choose a supported audio file.'); return }
-    const audio = audioRef.current
-    if (!audio) return
-    audio.pause()
-    if (urlRef.current) URL.revokeObjectURL(urlRef.current)
-    urlRef.current = URL.createObjectURL(file)
-    audio.src = urlRef.current
-    audio.load()
-    setSong(file.name.replace(/\.[^/.]+$/, ''))
-    setCurrent(0); setDuration(0); setPlaying(false); setError('')
-  }
-  const togglePlayback = async () => {
-    const audio = audioRef.current
-    if (!audio) return
-    if (!song) { inputRef.current?.click(); return }
-    try {
-      if (audio.paused) {
-        if (!ctxRef.current) {
-          ctxRef.current = new AudioContext()
-          analyserRef.current = ctxRef.current.createAnalyser()
-          analyserRef.current.fftSize = 512
-          sourceRef.current = ctxRef.current.createMediaElementSource(audio)
-          sourceRef.current.connect(analyserRef.current)
-          analyserRef.current.connect(ctxRef.current.destination)
-        }
-        await ctxRef.current.resume()
-        await audio.play()
-        setPlaying(true)
-      } else { audio.pause(); setPlaying(false) }
-    } catch { setError('This audio could not be played in your browser. Try a different file.') }
-  }
   const exportImage = () => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -157,9 +129,9 @@ export default function App() {
             <div className="panel-header"><span className="section-number">01</span><div><h2>Your music</h2><p>Start with a sound you love.</p></div></div>
             <input ref={inputRef} className="visually-hidden" type="file" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac" onChange={e => loadFile(e.target.files?.[0])} />
             <button className="upload-zone" onClick={() => inputRef.current?.click()}><span className="upload-icon"><UploadCloud size={23} /></span><strong>{song ? 'Change your song' : 'Drop into the rhythm'}</strong><span>{song ? 'Choose another audio file' : 'Click to upload an audio file'}</span><small>MP3, WAV, OGG & browser-supported formats</small></button>
-            {song && <div className="track"><div className="track-art"><Music2 size={21} /></div><div className="track-info"><strong title={song}>{song}</strong><span>Local audio file</span></div><button onClick={() => { audioRef.current?.pause(); if (audioRef.current) audioRef.current.src = ''; setSong(null); setPlaying(false); }} aria-label="Remove song"><X size={16} /></button></div>}
-            <audio ref={audioRef} onTimeUpdate={e => setCurrent(e.currentTarget.currentTime)} onLoadedMetadata={e => setDuration(e.currentTarget.duration)} onEnded={() => setPlaying(false)} onError={() => { if (song) setError('This audio file cannot be decoded in this browser.') }} />
-            <div className="player"><button className="play" onClick={togglePlayback} aria-label={playing ? 'Pause' : 'Play'}>{playing ? <Pause fill="currentColor" size={18} /> : <Play fill="currentColor" size={18} />}</button><div className="seek"><input aria-label="Song position" type="range" min={0} max={duration || 1} value={current} onChange={e => { if (audioRef.current && duration) audioRef.current.currentTime = Number(e.target.value) }} /><div className="timing"><span>{formatTime(current)}</span><span>{formatTime(duration)}</span></div></div><Volume2 size={18} className="speaker" /></div>
+            {song && <div className="track"><div className="track-art"><Music2 size={21} /></div><div className="track-info"><strong title={song}>{song}</strong><span>Local audio file</span></div><button onClick={removeSong} aria-label="Remove song"><X size={16} /></button></div>}
+            <audio ref={audioRef} onTimeUpdate={handleTimeUpdate} onLoadedMetadata={handleLoadedMetadata} onEnded={handleEnded} onError={handleAudioError} />
+            <div className="player"><button className="play" onClick={togglePlayback} aria-label={playing ? 'Pause' : 'Play'}>{playing ? <Pause fill="currentColor" size={18} /> : <Play fill="currentColor" size={18} />}</button><div className="seek"><input aria-label="Song position" type="range" min={0} max={duration || 1} value={current} onChange={e => seek(Number(e.target.value))} /><div className="timing"><span>{formatTime(current)}</span><span>{formatTime(duration)}</span></div></div><Volume2 size={18} className="speaker" /></div>
             {error && <div className="error" role="alert">{error}</div>}
             <div className="panel-divider" />
 
