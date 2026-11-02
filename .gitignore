@@ -1,8 +1,57 @@
+
+# Dependencies
 node_modules/
+
+# Production builds
 dist/
+dist-ssr/
+build/
+
+# Test output
+coverage/
+test-results/
+playwright-report/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment variables and secrets
 .env
 .env.*
 !.env.example
-.DS_Store
+
+# Local configuration
 *.local
-*.log
+
+# TypeScript generated files
+*.tsbuildinfo
+
+# Editor settings
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# Local audio files used for testing
+test-audio/
