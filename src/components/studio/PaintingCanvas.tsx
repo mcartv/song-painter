@@ -37,6 +37,11 @@ export default function PaintingCanvas({
   const [brushSize, setBrushSize] = useState(12)
   const [brushMode, setBrushMode] = useState<BrushMode>('paint')
   const [strokeCount, setStrokeCount] = useState(0)
+  const [cursor, setCursor] = useState<{
+    x: number
+    y: number
+  } | null>(null)
+
 
   const configRef = useRef({
     style, palette, intensity, density, playing,
@@ -77,6 +82,19 @@ export default function PaintingCanvas({
       pressure: event.pointerType === 'mouse' ? 1 : event.pressure || 0.5,
     }
   }
+
+
+  const updateCursor = (
+    event: PointerEvent<HTMLCanvasElement>,
+  ) => {
+    const point = getPoint(event)
+
+    setCursor({
+      x: point.x,
+      y: point.y,
+    })
+  }
+
 
   const handlePointerDown = (event: PointerEvent<HTMLCanvasElement>) => {
     if (activePointerRef.current !== null) return
@@ -182,6 +200,34 @@ export default function PaintingCanvas({
     const resize = () => {
       const rect = canvas.getBoundingClientRect()
       const dpr = Math.min(window.devicePixelRatio || 1, 2)
+
+
+      const previous = canvasSizeRef.current
+
+      if (
+        previous.width > 0 &&
+        previous.height > 0 &&
+        (previous.width !== rect.width ||
+          previous.height !== rect.height)
+      ) {
+        const scaleX = rect.width / previous.width
+        const scaleY = rect.height / previous.height
+
+        const resizeStroke = (stroke: BrushStroke) => {
+          for (const point of stroke.points) {
+            point.x *= scaleX
+            point.y *= scaleY
+          }
+        }
+
+        for (const stroke of strokesRef.current) {
+          resizeStroke(stroke)
+        }
+
+        if (activeStrokeRef.current) {
+          resizeStroke(activeStrokeRef.current)
+        }
+      }
 
       canvasSizeRef.current = {
         width: rect.width,
@@ -440,11 +486,45 @@ export default function PaintingCanvas({
             touchAction: 'none',
             cursor: brushMode === 'erase' ? 'cell' : 'crosshair',
           }}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
+
+          onPointerDown={(event) => {
+            updateCursor(event)
+            handlePointerDown(event)
+          }}
+          onPointerMove={(event) => {
+            updateCursor(event)
+            handlePointerMove(event)
+          }}
+          onPointerEnter={updateCursor}
+          onPointerLeave={() => setCursor(null)}
+
           onPointerUp={finishStroke}
           onPointerCancel={finishStroke}
         />
+
+
+        {cursor && (
+          <div
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              left: cursor.x,
+              top: cursor.y,
+              width: brushSize,
+              height: brushSize,
+              border: `1.5px solid ${brushMode === 'erase'
+                ? '#f5a5a5'
+                : '#d9b8ff'
+                }`,
+              borderRadius: '50%',
+              transform: 'translate(-50%, -50%)',
+              pointerEvents: 'none',
+              zIndex: 5,
+              boxShadow:
+                '0 0 0 1px rgba(0,0,0,0.35), 0 0 12px rgba(190,150,240,0.2)',
+            }}
+          />
+        )}
 
         <div
           className="canvas-overlay"

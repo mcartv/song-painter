@@ -6,22 +6,25 @@ export function drawBrushStroke(
     stroke: BrushStroke,
 ) {
     const { points, color, size, opacity } = stroke
-    if (!points.length) return
+    if (points.length === 0) return
 
     ctx.save()
 
     ctx.globalCompositeOperation =
-        stroke.mode === 'erase' ? 'destination-out' : 'source-over'
+        stroke.mode === 'erase'
+            ? 'destination-out'
+            : 'source-over'
 
     ctx.strokeStyle = color
     ctx.fillStyle = color
-    ctx.globalAlpha = stroke.mode === 'erase' ? 1 : opacity
+    ctx.lineWidth = size
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
-    ctx.lineWidth = size
+    ctx.globalAlpha = stroke.mode === 'erase' ? 1 : opacity
+
+    ctx.beginPath()
 
     if (points.length === 1) {
-        ctx.beginPath()
         ctx.arc(
             points[0].x,
             points[0].y,
@@ -31,13 +34,26 @@ export function drawBrushStroke(
         )
         ctx.fill()
     } else {
-        ctx.beginPath()
         ctx.moveTo(points[0].x, points[0].y)
 
-        for (let i = 1; i < points.length; i++) {
-            ctx.lineTo(points[i].x, points[i].y)
+        for (let i = 1; i < points.length - 1; i++) {
+            const current = points[i]
+            const next = points[i + 1]
+
+            const midX = (current.x + next.x) / 2
+            const midY = (current.y + next.y) / 2
+
+            ctx.quadraticCurveTo(
+                current.x,
+                current.y,
+                midX,
+                midY,
+            )
         }
 
+        const last = points[points.length - 1]
+
+        ctx.lineTo(last.x, last.y)
         ctx.stroke()
     }
 
