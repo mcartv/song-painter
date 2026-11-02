@@ -5,7 +5,13 @@ import { Download, Eraser, Paintbrush, RotateCcw, Sparkles, Trash2 } from 'lucid
 
 import type { PaintingStyle } from '../../types/studio'
 import type { AudioFeatures } from '../../lib/audioAnalyzer'
-import type { BrushMode, BrushPoint, BrushStroke } from '../../types/brush'
+import type {
+  BrushMode,
+  BrushPoint,
+  BrushStroke,
+  BrushPreset,
+} from '../../types/brush'
+
 
 import { analyzeAudio, SILENT_AUDIO } from '../../lib/audioAnalyzer'
 import { renderPainting } from '../../lib/paintingEngine'
@@ -36,6 +42,7 @@ export default function PaintingCanvas({
 }: PaintingCanvasProps) {
   const [brushSize, setBrushSize] = useState(12)
   const [brushMode, setBrushMode] = useState<BrushMode>('paint')
+  const [brushPreset, setBrushPreset] = useState<BrushPreset>('glow')
   const [strokeCount, setStrokeCount] = useState(0)
   const [cursor, setCursor] = useState<{
     x: number
@@ -47,7 +54,12 @@ export default function PaintingCanvas({
     style, palette, intensity, density, playing,
   })
 
-  const brushRef = useRef({ brushSize, brushMode })
+
+  const brushRef = useRef({
+    brushSize,
+    brushMode,
+    brushPreset,
+  })
   const strokesRef = useRef<BrushStroke[]>([])
   const activeStrokeRef = useRef<BrushStroke | null>(null)
   const activePointerRef = useRef<number | null>(null)
@@ -70,8 +82,13 @@ export default function PaintingCanvas({
   }, [style, palette, intensity, density, playing])
 
   useEffect(() => {
-    brushRef.current = { brushSize, brushMode }
-  }, [brushSize, brushMode])
+    brushRef.current = {
+      brushSize,
+      brushMode,
+      brushPreset,
+    }
+  }, [brushSize, brushMode, brushPreset])
+
 
   const getPoint = (event: PointerEvent<HTMLCanvasElement>): BrushPoint => {
     const rect = event.currentTarget.getBoundingClientRect()
@@ -116,7 +133,9 @@ export default function PaintingCanvas({
       size: brush.brushSize * boost,
       opacity: 0.85,
       mode: brush.brushMode,
+      preset: brush.brushPreset,
     }
+
 
     activeStrokeRef.current = stroke
     activePointerRef.current = event.pointerId
@@ -427,6 +446,37 @@ export default function PaintingCanvas({
         >
           <Eraser size={15} /> Eraser
         </button>
+
+        <label
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 12,
+          }}
+        >
+          Preset
+          <select
+            aria-label="Brush preset"
+            value={brushPreset}
+            onChange={(event) =>
+              setBrushPreset(event.target.value as BrushPreset)
+            }
+            disabled={brushMode === 'erase'}
+            style={{
+              border: '1px solid rgba(180,166,201,0.28)',
+              borderRadius: 10,
+              background: '#211c2b',
+              color: '#f1e9fa',
+              padding: '8px 10px',
+              cursor: 'pointer',
+            }}
+          >
+            <option value="glow">Soft Glow</option>
+            <option value="ink">Ink</option>
+            <option value="particles">Particles</option>
+          </select>
+        </label>
 
         <label
           style={{
