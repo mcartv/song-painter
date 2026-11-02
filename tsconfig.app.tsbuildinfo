@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/components/layout/header.tsx","./src/components/ui/aboutmodal.tsx","./src/lib/palettes.ts","./src/types/studio.ts"],"errors":true,"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/main.tsx","./src/components/layout/header.tsx","./src/components/studio/paintingcontrols.tsx","./src/components/studio/styleselector.tsx","./src/components/ui/aboutmodal.tsx","./src/lib/palettes.ts","./src/types/studio.ts"],"version":"5.9.3"}

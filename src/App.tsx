@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowDownToLine, Image, Music2, Pause, Play, RotateCcw, SlidersHorizontal, Sparkles, UploadCloud, Volume2 } from 'lucide-react'
+import { ArrowDownToLine, Image, Music2, Pause, Play, SlidersHorizontal, Sparkles, UploadCloud, Volume2, X } from 'lucide-react'
 
 import type { PaintingStyle } from './types/studio';
 import { palettes } from './lib/palettes';
 import Header from './components/layout/Header'
 import AboutModal from './components/ui/AboutModal'
+import StyleSelector from './components/studio/StyleSelector'
+import PaintingControls from './components/studio/PaintingControls'
+
 const formatTime = (value: number) => Number.isFinite(value) ? `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, '0')}` : '0:00'
 
 export default function App() {
@@ -159,13 +162,26 @@ export default function App() {
             <div className="player"><button className="play" onClick={togglePlayback} aria-label={playing ? 'Pause' : 'Play'}>{playing ? <Pause fill="currentColor" size={18} /> : <Play fill="currentColor" size={18} />}</button><div className="seek"><input aria-label="Song position" type="range" min={0} max={duration || 1} value={current} onChange={e => { if (audioRef.current && duration) audioRef.current.currentTime = Number(e.target.value) }} /><div className="timing"><span>{formatTime(current)}</span><span>{formatTime(duration)}</span></div></div><Volume2 size={18} className="speaker" /></div>
             {error && <div className="error" role="alert">{error}</div>}
             <div className="panel-divider" />
-            <div className="panel-header"><span className="section-number">02</span><div><h2>Painting style</h2><p>Choose your kind of magic.</p></div></div>
-            <div className="styles">{(['Bloom', 'Flow', 'Pulse'] as PaintingStyle[]).map((name, i) => <button key={name} onClick={() => setStyle(name)} className={`style-choice ${style === name ? 'selected' : ''}`}><span className={`style-preview preview-${i}`}>{i === 0 ? '✺' : i === 1 ? '〰' : '◎'}</span><span>{name}</span></button>)}</div>
-            <div className="control-title"><span>Color palette</span><span className="muted-value">{palettes[palette].name}</span></div>
-            <div className="palette-choices">{palettes.map((item, i) => <button title={item.name} aria-label={item.name} aria-pressed={palette === i} key={item.name} className={`palette-choice ${palette === i ? 'chosen' : ''}`} onClick={() => setPalette(i)} style={{ background: `linear-gradient(120deg, ${item.colors.join(', ')})` }} />)}</div>
-            <div className="control-title"><span>Intensity</span><span className="muted-value">{intensity}%</span></div><input className="setting-range" aria-label="Intensity" type="range" min="10" max="100" value={intensity} onChange={e => setIntensity(Number(e.target.value))} />
-            <div className="control-title"><span>Particle density</span><span className="muted-value">{density}%</span></div><input className="setting-range" aria-label="Particle density" type="range" min="10" max="100" value={density} onChange={e => setDensity(Number(e.target.value))} />
-            <button className="reset" onClick={() => { setStyle('Bloom'); setPalette(0); setIntensity(65); setDensity(65) }}><RotateCcw size={14} /> Reset settings</button>
+
+            <StyleSelector
+              selectedStyle={style}
+              onStyleChange={setStyle}
+            />
+
+            <PaintingControls
+              palette={palette}
+              intensity={intensity}
+              density={density}
+              onPaletteChange={setPalette}
+              onIntensityChange={setIntensity}
+              onDensityChange={setDensity}
+              onReset={() => {
+                setStyle('Bloom')
+                setPalette(0)
+                setIntensity(65)
+                setDensity(65)
+              }}
+            />
           </aside>
         </div>
         <footer className="footer"><span><span className="brand-dot">✦</span> An experiment in listening differently.</span><span><SlidersHorizontal size={13} /> PHASE 01 / CREATIVE STUDIO <Image size={13} /></span></footer>
