@@ -6,16 +6,19 @@ export function drawBrushStroke(
     stroke: BrushStroke,
 ) {
     const { points, color, size, opacity } = stroke
-
-    if (points.length === 0) return
+    if (!points.length) return
 
     ctx.save()
+
+    ctx.globalCompositeOperation =
+        stroke.mode === 'erase' ? 'destination-out' : 'source-over'
+
     ctx.strokeStyle = color
     ctx.fillStyle = color
-    ctx.lineWidth = size
+    ctx.globalAlpha = stroke.mode === 'erase' ? 1 : opacity
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
-    ctx.globalAlpha = opacity
+    ctx.lineWidth = size
 
     if (points.length === 1) {
         ctx.beginPath()
@@ -32,8 +35,7 @@ export function drawBrushStroke(
         ctx.moveTo(points[0].x, points[0].y)
 
         for (let i = 1; i < points.length; i++) {
-            const point = points[i]
-            ctx.lineTo(point.x, point.y)
+            ctx.lineTo(points[i].x, points[i].y)
         }
 
         ctx.stroke()
