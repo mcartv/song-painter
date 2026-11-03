@@ -29,7 +29,10 @@ import { exportArtwork } from '../../lib/exportArtwork'
 interface PaintingCanvasProps {
   canvasRef: RefObject<HTMLCanvasElement | null>
   analyserRef: RefObject<AnalyserNode | null>
-  exportRef: RefObject<(() => void) | null>
+  exportRef: RefObject<
+    ((width: number, height: number) => void) | null
+  >
+  onExportClick: () => void
   song: string | null
   playing: boolean
   current: number
@@ -42,6 +45,7 @@ export default function PaintingCanvas({
   canvasRef,
   analyserRef,
   exportRef,
+  onExportClick,
   song,
   playing,
   current,
@@ -73,7 +77,6 @@ export default function PaintingCanvas({
 
   const lastCurrentRef = useRef(current)
 
-  // Keep animation settings current without restarting the loop.
   configRef.current = {
     song,
     playing,
@@ -112,12 +115,10 @@ export default function PaintingCanvas({
     redrawLayer()
   }
 
-  // A new track starts a new composition.
   useEffect(() => {
     resetArtwork()
   }, [song])
 
-  // Rewinding the track begins a fresh interpretation.
   useEffect(() => {
     if (current < lastCurrentRef.current - 2) {
       resetArtwork()
@@ -190,7 +191,12 @@ export default function PaintingCanvas({
       drawArtworkBackground(layerCtx, width, height)
 
       for (const mark of directorRef.current.marks) {
-        drawPaintMark(layerCtx, mark, width, height)
+        drawPaintMark(
+          layerCtx,
+          mark,
+          width,
+          height,
+        )
       }
     }
 
@@ -261,7 +267,7 @@ export default function PaintingCanvas({
             config.density,
           )
 
-          if (newMarks.length) {
+          if (newMarks.length > 0) {
             for (const mark of newMarks) {
               drawPaintMark(
                 layerCtx,
@@ -271,7 +277,8 @@ export default function PaintingCanvas({
               )
             }
 
-            const count = directorRef.current.marks.length
+            const count =
+              directorRef.current.marks.length
 
             if (count % 10 < newMarks.length) {
               setMarkCount(count)
@@ -282,7 +289,14 @@ export default function PaintingCanvas({
 
       if (width > 0 && height > 0) {
         ctx.clearRect(0, 0, width, height)
-        ctx.drawImage(layer, 0, 0, width, height)
+
+        ctx.drawImage(
+          layer,
+          0,
+          0,
+          width,
+          height,
+        )
       }
 
       animation = requestAnimationFrame(render)
@@ -297,29 +311,18 @@ export default function PaintingCanvas({
     }
   }, [canvasRef, analyserRef])
 
-  const saveHD = () => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const rect = canvas.getBoundingClientRect()
-
-    // Default HD export for this milestone.
-    // Custom resolutions come in the Export Studio milestone.
-    const scale = Math.min(
-      2,
-      4096 / Math.max(rect.width, rect.height),
-    )
-
+  const exportAtResolution = (
+    width: number,
+    height: number,
+  ) => {
     exportArtwork(
       directorRef.current.marks,
-      Math.round(rect.width * scale),
-      Math.round(rect.height * scale),
+      width,
+      height,
     )
   }
 
-  // Allows the main header's Export button to use
-  // the same HD export as the canvas toolbar.
-  exportRef.current = saveHD
+  exportRef.current = exportAtResolution
 
   const controlStyle = {
     border: '1px solid rgba(180,166,201,0.28)',
@@ -368,19 +371,36 @@ export default function PaintingCanvas({
           }}
         >
           Brush style
+
           <select
             aria-label="Auto paint brush"
             value={brush}
-            onChange={(event) => {
-              setBrush(event.target.value as AutoBrush)
-            }}
+            onChange={(event) =>
+              setBrush(
+                event.target.value as AutoBrush,
+              )
+            }
             style={controlStyle}
           >
-            <option value="surprise">Surprise Mix</option>
-            <option value="block">Solid Block</option>
-            <option value="paint">Paintbrush</option>
-            <option value="hair">Hair Pen</option>
-            <option value="glow">Soft Glow</option>
+            <option value="surprise">
+              Surprise Mix
+            </option>
+
+            <option value="block">
+              Solid Block
+            </option>
+
+            <option value="paint">
+              Paintbrush
+            </option>
+
+            <option value="hair">
+              Hair Pen
+            </option>
+
+            <option value="glow">
+              Soft Glow
+            </option>
           </select>
         </label>
 
@@ -401,18 +421,20 @@ export default function PaintingCanvas({
 
         <button
           type="button"
-          onClick={saveHD}
+          onClick={onExportClick}
           disabled={!song}
           style={{
             ...controlStyle,
             display: 'inline-flex',
             alignItems: 'center',
             gap: 7,
-            cursor: song ? 'pointer' : 'not-allowed',
+            cursor: song
+              ? 'pointer'
+              : 'not-allowed',
           }}
         >
           <Download size={15} />
-          Save HD
+          Export PNG
         </button>
       </div>
 
@@ -430,8 +452,13 @@ export default function PaintingCanvas({
             className="canvas-overlay"
             style={{ pointerEvents: 'none' }}
           >
-            <span className="canvas-ornament">✦</span>
-            <span>YOUR SONG BECOMES ART HERE</span>
+            <span className="canvas-ornament">
+              ✦
+            </span>
+
+            <span>
+              YOUR SONG BECOMES ART HERE
+            </span>
           </div>
         )}
       </div>
@@ -439,10 +466,12 @@ export default function PaintingCanvas({
       <div className="canvas-footer">
         <span>
           <Sparkles size={14} />
+
           {playing
             ? 'Your music is creating something unique.'
             : 'Press Play and let the music paint.'}
         </span>
+
         <span>{markCount} MARKS</span>
       </div>
     </section>
