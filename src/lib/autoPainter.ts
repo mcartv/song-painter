@@ -1,6 +1,4 @@
 
-import type { AudioFeatures } from './audioAnalyzer'
-
 export type AutoBrush =
     | 'surprise'
     | 'block'
@@ -8,14 +6,18 @@ export type AutoBrush =
     | 'hair'
     | 'glow'
 
-type MarkBrush = Exclude<AutoBrush, 'surprise'>
+type StrokeBrush = Exclude<AutoBrush, 'surprise'>
 
-export interface PaintMark {
-    brush: MarkBrush
+export interface PaintPoint {
     x: number
     y: number
-    endX: number
-    endY: number
+    pressure: number
+}
+
+export interface PaintMark {
+    id: number
+    brush: StrokeBrush
+    points: PaintPoint[]
     size: number
     color: string
     opacity: number
@@ -24,206 +26,204 @@ export interface PaintMark {
 
 export interface PaintDirector {
     marks: PaintMark[]
+    active: PaintMark | null
     elapsed: number
-    accumulator: number
-    focalX: number
-    focalY: number
-    targetX: number
-    targetY: number
-    nextFocalAt: number
+    voiceTime: number
+    quietTime: number
+    x: number
+    y: number
+    heading: number
+    nextId: number
 }
 
-const clamp = (n: number, a: number, b: number) =>
-    Math.max(a, Math.min(b, n))
+export interface StrokeUpdate {
+    segments: Array<{ mark: PaintMark; index: number }>
+    started: boolean
+    finished: boolean
+}
 
-const random = (a: number, b: number) =>
-    a + Math.random() * (b - a)
+const clamp = (x: number, min: number, max: number) =>
+    Math.max(min, Math.min(max, x))
 
-const seeded = (seed: number) => {
-    const x = Math.sin(seed * 127.1 + 78.233) * 43758.5453
-    return x - Math.floor(x)
+const random = (min: number, max: number) =>
+    min + Math.random() * (max - min)
+
+const seeded = (x: number) => {
+    const n = Math.sin(x * 127.1 + 78.233) * 43758.5453
+    return n - Math.floor(n)
 }
 
 export function createPaintDirector(): PaintDirector {
     return {
         marks: [],
+        active: null,
         elapsed: 0,
-        accumulator: 0,
-        focalX: 0.5,
-        focalY: 0.5,
-        targetX: random(0.25, 0.75),
-        targetY: random(0.25, 0.75),
-        nextFocalAt: 0,
+        voiceTime: 0,
+        quietTime: 0,
+        x: 0.5,
+        y: 0.5,
+        heading: 0,
+        nextId: 1,
     }
 }
 
-function chooseBrush(
-    selected: AutoBrush,
-    audio: AudioFeatures,
-): MarkBrush {
+function pickBrush(selected: AutoBrush): StrokeBrush {
     if (selected !== 'surprise') return selected
 
-    const roll = Math.random()
+    const choices: StrokeBrush[] = [
+        'paint', 'paint', 'hair', 'hair', 'glow', 'block',
+    ]
 
-    if (audio.bass > 0.3 && roll < 0.35) {
-        return 'block'
-    }
-
-    if (audio.treble > 0.25 && roll < 0.4) {
-        return 'hair'
-    }
-
-    if (roll < 0.38) return 'paint'
-    if (roll < 0.62) return 'hair'
-    if (roll < 0.82) return 'glow'
-    return 'block'
+    return choices[Math.floor(Math.random() * choices.length)]
 }
 
-export function advancePaintDirector(
+export function advanceVocalPainter(
     director: PaintDirector,
-    deltaMs: number,
-    audio: AudioFeatures,
+    dtMs: number,
+    vocalLevel: number,
     brush: AutoBrush,
     colors: string[],
     intensity: number,
-    density: number,
-): PaintMark[] {
-    if (!colors.length || director.marks.length >= 4500) {
-        return []
+    sensitivity: number,
+): StrokeUpdate {
+    const result: StrokeUpdate = {
+        segments: [],
+        started: false,
+        finished: false,
     }
 
-    const dt = clamp(deltaMs, 0, 100)
+    if (!colors.length || director.marks.length >= 2000) {
+        return result
+    }
+
+    const dt = clamp(dtMs, 0, 80)
     director.elapsed += dt
 
-    // Move the composition's focal area gradually.
-    if (director.elapsed >= director.nextFocalAt) {
-        director.targetX = random(0.2, 0.8)
-        director.targetY = random(0.18, 0.82)
-        director.nextFocalAt =
-            director.elapsed + random(3500, 8500)
+    const threshold = 0.10 +
+        (100 - clamp(sensitivity, 0, 100)) * 0.004
+
+    const vocalActive = vocalLevel >= threshold
+
+    if (!vocalActive) {
+        director.voiceTime = 0
+        director.quietTime += dt
+
+        if (director.active && director.quietTime > 220) {
+            director.active = null
+            result.finished = true
+        }
+
+        return result
     }
 
-    const drift = 1 - Math.exp(-dt / 3000)
+    director.quietTime = 0
+    director.voiceTime += dt
 
-    director.focalX +=
-        (director.targetX - director.focalX) * drift
+    if (!director.active && director.voiceTime < 100) {
+        return result
+    }
 
-    director.focalY +=
-        (director.targetY - director.focalY) * drift
+    if (!director.active) {
+        director.x = random(0.18, 0.82)
+        director.y = random(0.18, 0.82)
+        director.heading = random(-Math.PI, Math.PI)
 
-    const soundStrength = clamp(
-        audio.energy * 2.8 +
-        audio.mid * 0.7 +
-        audio.bass * 0.35,
+        const id = director.nextId++
+
+        const mark: PaintMark = {
+            id,
+            brush: pickBrush(brush),
+            points: [{
+                x: director.x,
+                y: director.y,
+                pressure: 0.4,
+            }],
+            size: 0.008 + (intensity / 100) * 0.023,
+            color: colors[Math.floor(Math.random() * colors.length)],
+            opacity: random(0.62, 0.9),
+            seed: random(0, 10000),
+        }
+
+        director.marks.push(mark)
+        director.active = mark
+        result.started = true
+    }
+
+    const mark = director.active
+    if (!mark) return result
+
+    const strength = clamp(
+        (vocalLevel - threshold) / Math.max(0.01, 1 - threshold),
         0,
         1,
     )
 
-    // Quiet sections paint sparsely; energetic ones build layers.
-    const interval = clamp(
-        440 -
-        density * 2.3 -
-        soundStrength * 180,
-        65,
-        500,
-    )
+    // An ongoing phrase means ongoing physical movement.
+    const speed = 0.10 + strength * 0.18
+    const distance = speed * dt / 1000
 
-    director.accumulator = Math.min(
-        director.accumulator + dt,
-        interval * 3,
-    )
+    const wave =
+        Math.sin(director.elapsed * 0.0017 + mark.seed) * 0.8 +
+        Math.sin(director.elapsed * 0.003 + mark.seed) * 0.25
 
-    const created: PaintMark[] = []
+    director.heading += wave * dt * 0.00065
 
-    while (
-        director.accumulator >= interval &&
-        created.length < 3 &&
-        director.marks.length < 4500
-    ) {
-        director.accumulator -= interval
+    let nx = director.x + Math.cos(director.heading) * distance
+    let ny = director.y + Math.sin(director.heading) * distance
 
-        // Leave more empty space in quiet passages.
-        if (
-            audio.energy < 0.012 &&
-            Math.random() < 0.8
-        ) {
-            continue
-        }
-
-        const kind = chooseBrush(brush, audio)
-
-        // Most marks gather around the focal area.
-        // Some break away to create tension and contrast.
-        const distant = Math.random() < 0.16
-
-        const spread =
-            0.055 + (1 - soundStrength) * 0.12
-
-        const x = distant
-            ? random(0.08, 0.92)
-            : clamp(
-                director.focalX +
-                random(-spread, spread),
-                0.04,
-                0.96,
-            )
-
-        const y = distant
-            ? random(0.08, 0.92)
-            : clamp(
-                director.focalY +
-                random(-spread, spread),
-                0.04,
-                0.96,
-            )
-
-        const angle =
-            director.elapsed * 0.00017 +
-            audio.mid * Math.PI * 3 +
-            random(-1.4, 1.4)
-
-        const length =
-            0.025 +
-            soundStrength * 0.16 +
-            random(0.005, 0.09)
-
-        const endX = clamp(
-            x + Math.cos(angle) * length,
-            0.02,
-            0.98,
+    // Turn back toward the painting if we approach the edge.
+    if (nx < 0.06 || nx > 0.94 || ny < 0.06 || ny > 0.94) {
+        director.heading = Math.atan2(
+            0.5 - director.y,
+            0.5 - director.x,
         )
 
-        const endY = clamp(
-            y + Math.sin(angle) * length,
-            0.02,
-            0.98,
-        )
-
-        const size = clamp(
-            (0.007 + audio.bass * 0.055) *
-            (0.5 + intensity / 100),
-            0.004,
-            0.1,
-        )
-
-        const mark: PaintMark = {
-            brush: kind,
-            x,
-            y,
-            endX,
-            endY,
-            size,
-            color:
-                colors[Math.floor(Math.random() * colors.length)],
-            opacity: random(0.35, 0.85),
-            seed: Math.random() * 10000,
-        }
-
-        director.marks.push(mark)
-        created.push(mark)
+        nx = director.x + Math.cos(director.heading) * distance
+        ny = director.y + Math.sin(director.heading) * distance
     }
 
-    return created
+    director.x = clamp(nx, 0.04, 0.96)
+    director.y = clamp(ny, 0.04, 0.96)
+
+    const previous = mark.points[mark.points.length - 1]
+    const pressure = previous.pressure +
+        (0.25 + strength * 0.75 - previous.pressure) * 0.16
+
+    const point: PaintPoint = {
+        x: director.x,
+        y: director.y,
+        pressure,
+    }
+
+    if (
+        Math.hypot(
+            point.x - previous.x,
+            point.y - previous.y,
+        ) < 0.0001
+    ) {
+        return result
+    }
+
+    mark.points.push(point)
+
+    result.segments.push({
+        mark,
+        index: mark.points.length - 1,
+    })
+
+    // Continue unusually long phrases as connected paths.
+    if (mark.points.length >= 2500) {
+        const continuation: PaintMark = {
+            ...mark,
+            id: director.nextId++,
+            points: [{ ...point }],
+        }
+
+        director.marks.push(continuation)
+        director.active = continuation
+    }
+
+    return result
 }
 
 export function drawArtworkBackground(
@@ -234,16 +234,16 @@ export function drawArtworkBackground(
     ctx.save()
 
     const gradient = ctx.createRadialGradient(
-        width * 0.43,
-        height * 0.4,
+        width * 0.45,
+        height * 0.42,
         0,
         width * 0.5,
         height * 0.5,
         Math.max(width, height) * 0.8,
     )
 
-    gradient.addColorStop(0, '#211c29')
-    gradient.addColorStop(0.55, '#15121b')
+    gradient.addColorStop(0, '#24202c')
+    gradient.addColorStop(0.55, '#17141e')
     gradient.addColorStop(1, '#0e0c13')
 
     ctx.fillStyle = gradient
@@ -252,120 +252,107 @@ export function drawArtworkBackground(
     ctx.restore()
 }
 
-export function drawPaintMark(
+export function drawPaintSegment(
     ctx: CanvasRenderingContext2D,
     mark: PaintMark,
+    index: number,
     width: number,
     height: number,
 ) {
-    const unit = Math.min(width, height)
+    if (index < 1 || index >= mark.points.length) return
 
-    const x1 = mark.x * width
-    const y1 = mark.y * height
-    const x2 = mark.endX * width
-    const y2 = mark.endY * height
-    const size = mark.size * unit
+    const from = mark.points[index - 1]
+    const to = mark.points[index]
+
+    const x1 = from.x * width
+    const y1 = from.y * height
+    const x2 = to.x * width
+    const y2 = to.y * height
 
     const dx = x2 - x1
     const dy = y2 - y1
-    const angle = Math.atan2(dy, dx)
-    const distance = Math.hypot(dx, dy)
+    const length = Math.hypot(dx, dy)
+
+    if (length < 0.001) return
+
+    const nx = -dy / length
+    const ny = dx / length
+
+    const unit = Math.min(width, height)
+    const pressure = (from.pressure + to.pressure) / 2
+    const size = mark.size * unit * pressure
 
     ctx.save()
+
+    ctx.globalAlpha = mark.opacity
     ctx.strokeStyle = mark.color
     ctx.fillStyle = mark.color
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
-    ctx.globalAlpha = mark.opacity
 
-    const curve = (offset = 0) => {
+    const line = (offset: number, thickness: number) => {
+        ctx.lineWidth = Math.max(0.4, thickness)
         ctx.beginPath()
-        ctx.moveTo(
-            x1 - Math.sin(angle) * offset,
-            y1 + Math.cos(angle) * offset,
-        )
-        ctx.quadraticCurveTo(
-            (x1 + x2) / 2 -
-            Math.sin(angle) * (offset + size * 1.5),
-            (y1 + y2) / 2 +
-            Math.cos(angle) * (offset + size * 1.5),
-            x2 - Math.sin(angle) * offset,
-            y2 + Math.cos(angle) * offset,
-        )
+        ctx.moveTo(x1 + nx * offset, y1 + ny * offset)
+        ctx.lineTo(x2 + nx * offset, y2 + ny * offset)
         ctx.stroke()
     }
 
     switch (mark.brush) {
         case 'block': {
-            ctx.translate(x1, y1)
-            ctx.rotate(angle)
-            ctx.globalAlpha = mark.opacity * 0.75
-            ctx.fillRect(
-                -size * 0.3,
-                -size * 1.2,
-                Math.max(size * 1.8, distance),
-                size * 2.4,
-            )
+            ctx.beginPath()
+            ctx.moveTo(x1 + nx * size, y1 + ny * size)
+            ctx.lineTo(x2 + nx * size, y2 + ny * size)
+            ctx.lineTo(x2 - nx * size, y2 - ny * size)
+            ctx.lineTo(x1 - nx * size, y1 - ny * size)
+            ctx.closePath()
+            ctx.fill()
             break
         }
 
         case 'paint': {
-            ctx.lineWidth = size * 2.4
-            ctx.globalAlpha = mark.opacity * 0.55
-            curve()
+            ctx.globalAlpha = mark.opacity * 0.65
+            line(0, size * 1.7)
 
-            // Small bristles add a painterly texture.
-            for (let i = 0; i < 9; i++) {
-                const variation =
-                    seeded(mark.seed + i * 7) - 0.5
-
-                ctx.lineWidth =
-                    Math.max(0.6, size * randomFree(mark.seed, i))
+            for (let i = 0; i < 10; i++) {
+                const offset =
+                    (seeded(mark.seed + i * 13) - 0.5) * size * 1.7
 
                 ctx.globalAlpha =
-                    mark.opacity * (0.2 + i * 0.035)
+                    mark.opacity * (0.2 + seeded(mark.seed + i) * 0.45)
 
-                curve(variation * size * 2.3)
+                line(offset, size * 0.09)
             }
             break
         }
 
         case 'hair': {
-            for (let i = 0; i < 8; i++) {
-                const variation =
-                    seeded(mark.seed + i * 13) - 0.5
+            for (let i = 0; i < 7; i++) {
+                const offset = (i - 3) * size * 0.25
 
                 ctx.globalAlpha =
-                    mark.opacity * (0.25 + i * 0.06)
+                    mark.opacity * (0.35 + seeded(mark.seed + i) * 0.5)
 
-                ctx.lineWidth =
-                    Math.max(0.45, size * 0.025)
-
-                curve(variation * size * 2.8)
+                line(offset, Math.max(0.4, size * 0.022))
             }
             break
         }
 
         case 'glow': {
             ctx.shadowColor = mark.color
-            ctx.shadowBlur = size * 4
-            ctx.globalAlpha = mark.opacity * 0.45
-            ctx.lineWidth = size * 2.2
-            curve()
+            ctx.shadowBlur = size * 2
 
-            ctx.shadowBlur = size
+            ctx.globalAlpha = mark.opacity * 0.45
+            line(0, size * 1.7)
+
+            ctx.shadowBlur = size * 0.5
             ctx.globalAlpha = mark.opacity
-            ctx.lineWidth = size * 0.6
-            curve()
+            line(0, size * 0.45)
             break
         }
     }
 
     ctx.restore()
-}
-
-function randomFree(seed: number, index: number) {
-    return 0.06 + seeded(seed + index * 19) * 0.22
 }
 
 export function renderAutoArtwork(
@@ -377,6 +364,8 @@ export function renderAutoArtwork(
     drawArtworkBackground(ctx, width, height)
 
     for (const mark of marks) {
-        drawPaintMark(ctx, mark, width, height)
+        for (let i = 1; i < mark.points.length; i++) {
+            drawPaintSegment(ctx, mark, i, width, height)
+        }
     }
 }

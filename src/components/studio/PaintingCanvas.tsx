@@ -1,25 +1,15 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
-import {
-  Download,
-  RefreshCcw,
-  Sparkles,
-} from 'lucide-react'
+import { Download, RefreshCcw, Sparkles } from 'lucide-react'
 
-import type { AudioFeatures } from '../../lib/audioAnalyzer'
+import type { VocalAnalysis } from '../../hooks/useVocalAnalysis'
 import type { AutoBrush } from '../../lib/autoPainter'
 
 import {
-  analyzeAudio,
-  SILENT_AUDIO,
-} from '../../lib/audioAnalyzer'
-
-import {
   createPaintDirector,
-  advancePaintDirector,
-  drawArtworkBackground,
-  drawPaintMark,
+  advanceVocalPainter,
+  drawPaintSegment,
   renderAutoArtwork,
 } from '../../lib/autoPainter'
 
@@ -28,81 +18,76 @@ import { exportArtwork } from '../../lib/exportArtwork'
 
 interface PaintingCanvasProps {
   canvasRef: RefObject<HTMLCanvasElement | null>
-  analyserRef: RefObject<AnalyserNode | null>
+  audioRef: RefObject<HTMLAudioElement | null>
   exportRef: RefObject<
     ((width: number, height: number) => void) | null
   >
   onExportClick: () => void
   song: string | null
   playing: boolean
-  current: number
+  vocalAnalysis: VocalAnalysis | null
   palette: number
   intensity: number
-  density: number
 }
 
 export default function PaintingCanvas({
   canvasRef,
-  analyserRef,
+  audioRef,
   exportRef,
   onExportClick,
   song,
   playing,
-  current,
+  vocalAnalysis,
   palette,
   intensity,
-  density,
 }: PaintingCanvasProps) {
   const [brush, setBrush] = useState<AutoBrush>('surprise')
-  const [markCount, setMarkCount] = useState(0)
+  const [sensitivity, setSensitivity] = useState(70)
+  const [strokeCount, setStrokeCount] = useState(0)
+  const [painting, setPainting] = useState(false)
 
   const directorRef = useRef(createPaintDirector())
-  const brushRef = useRef(brush)
-
-  const configRef = useRef({
-    song,
-    playing,
-    palette,
-    intensity,
-    density,
-  })
-
   const layerRef = useRef<HTMLCanvasElement | null>(null)
 
-  const canvasSizeRef = useRef({
+  const sizeRef = useRef({
     width: 0,
     height: 0,
     dpr: 1,
   })
 
-  const lastCurrentRef = useRef(current)
-
-  configRef.current = {
-    song,
+  const configRef = useRef({
     playing,
+    vocalAnalysis,
+    brush,
+    sensitivity,
     palette,
     intensity,
-    density,
-  }
+  })
 
-  brushRef.current = brush
+  configRef.current = {
+    playing,
+    vocalAnalysis,
+    brush,
+    sensitivity,
+    palette,
+    intensity,
+  }
 
   const redrawLayer = () => {
     const layer = layerRef.current
     if (!layer) return
 
-    const ctx = layer.getContext('2d')
-    if (!ctx) return
+    const context = layer.getContext('2d')
+    if (!context) return
 
-    const { width, height, dpr } = canvasSizeRef.current
+    const { width, height, dpr } = sizeRef.current
 
     if (width <= 0 || height <= 0) return
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    ctx.clearRect(0, 0, width, height)
+    context.setTransform(dpr, 0, 0, dpr, 0, 0)
 
     renderAutoArtwork(
-      ctx,
+      context,
       width,
       height,
       directorRef.current.marks,
@@ -111,21 +96,16 @@ export default function PaintingCanvas({
 
   const resetArtwork = () => {
     directorRef.current = createPaintDirector()
-    setMarkCount(0)
+    setStrokeCount(0)
+    setPainting(false)
     redrawLayer()
   }
 
+  // A newly uploaded song or newly analyzed track
+  // always starts with a fresh canvas.
   useEffect(() => {
     resetArtwork()
-  }, [song])
-
-  useEffect(() => {
-    if (current < lastCurrentRef.current - 2) {
-      resetArtwork()
-    }
-
-    lastCurrentRef.current = current
-  }, [current])
+  }, [song, vocalAnalysis])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -136,23 +116,17 @@ export default function PaintingCanvas({
 
     const layer = document.createElement('canvas')
     const layerCtx = layer.getContext('2d')
-
     if (!layerCtx) return
 
     layerRef.current = layer
 
     let animation = 0
-    let lastTime = 0
-
-    let frequencyData: Uint8Array<ArrayBuffer> | null = null
-
-    let smoothed: AudioFeatures = {
-      ...SILENT_AUDIO,
-    }
+    let lastAudioTime: number | null = null
+    let smoothedLevel = 0
+    let lastPainting = false
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect()
-
       const width = rect.width
       const height = rect.height
 
@@ -163,21 +137,15 @@ export default function PaintingCanvas({
         2,
       )
 
-      const previous = canvasSizeRef.current
+      const previous = sizeRef.current
 
       if (
         previous.width === width &&
         previous.height === height &&
         previous.dpr === dpr
-      ) {
-        return
-      }
+      ) return
 
-      canvasSizeRef.current = {
-        width,
-        height,
-        dpr,
-      }
+      sizeRef.current = { width, height, dpr }
 
       canvas.width = Math.round(width * dpr)
       canvas.height = Math.round(height * dpr)
@@ -188,16 +156,12 @@ export default function PaintingCanvas({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       layerCtx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
-      drawArtworkBackground(layerCtx, width, height)
-
-      for (const mark of directorRef.current.marks) {
-        drawPaintMark(
-          layerCtx,
-          mark,
-          width,
-          height,
-        )
-      }
+      renderAutoArtwork(
+        layerCtx,
+        width,
+        height,
+        directorRef.current.marks,
+      )
     }
 
     resize()
@@ -205,98 +169,99 @@ export default function PaintingCanvas({
     const observer = new ResizeObserver(resize)
     observer.observe(canvas)
 
-    const render = (timestamp: number) => {
+    const render = () => {
+      const audio = audioRef.current
       const config = configRef.current
-      const { width, height } = canvasSizeRef.current
-
-      const dt = lastTime
-        ? Math.min(timestamp - lastTime, 100)
-        : 16.667
-
-      lastTime = timestamp
+      const { width, height } = sizeRef.current
 
       if (
-        config.song &&
+        audio &&
         config.playing &&
+        config.vocalAnalysis &&
         width > 0 &&
         height > 0
       ) {
-        const analyser = analyserRef.current
+        const songTime = audio.currentTime
 
-        if (analyser) {
-          if (
-            !frequencyData ||
-            frequencyData.length !== analyser.frequencyBinCount
-          ) {
-            frequencyData = new Uint8Array(
-              analyser.frequencyBinCount,
-            )
-          }
+        const frame = Math.min(
+          config.vocalAnalysis.levels.length - 1,
+          Math.floor(
+            songTime * config.vocalAnalysis.framesPerSecond,
+          ),
+        )
 
-          const features = analyzeAudio(
-            analyser,
-            frequencyData,
+        const level = frame >= 0
+          ? config.vocalAnalysis.levels[frame]
+          : 0
+
+        const elapsed = lastAudioTime === null
+          ? 16.667
+          : (songTime - lastAudioTime) * 1000
+
+        // A backward seek or large forward seek starts
+        // a new artwork, rather than connecting unrelated
+        // parts of the song with one line.
+        if (elapsed < -100 || elapsed > 500) {
+          directorRef.current = createPaintDirector()
+          renderAutoArtwork(layerCtx, width, height, [])
+          setStrokeCount(0)
+          smoothedLevel = 0
+          lastPainting = false
+        }
+
+        const dt = elapsed < 0 || elapsed > 500
+          ? 16.667
+          : Math.max(0, Math.min(80, elapsed))
+
+        smoothedLevel +=
+          (level - smoothedLevel) *
+          (1 - Math.exp(-dt / 65))
+
+        const update = advanceVocalPainter(
+          directorRef.current,
+          dt,
+          smoothedLevel,
+          config.brush,
+          palettes[config.palette].colors,
+          config.intensity,
+          config.sensitivity,
+        )
+
+        for (const segment of update.segments) {
+          drawPaintSegment(
+            layerCtx,
+            segment.mark,
+            segment.index,
+            width,
+            height,
           )
+        }
 
-          const smoothFactor =
-            1 - Math.exp(-dt / 110)
+        if (update.started) {
+          setStrokeCount(directorRef.current.marks.length)
+        }
 
-          smoothed = {
-            bass:
-              smoothed.bass +
-              (features.bass - smoothed.bass) * smoothFactor,
-            mid:
-              smoothed.mid +
-              (features.mid - smoothed.mid) * smoothFactor,
-            treble:
-              smoothed.treble +
-              (features.treble - smoothed.treble) * smoothFactor,
-            energy:
-              smoothed.energy +
-              (features.energy - smoothed.energy) *
-              smoothFactor,
-          }
+        const active = directorRef.current.active !== null
 
-          const newMarks = advancePaintDirector(
-            directorRef.current,
-            dt,
-            smoothed,
-            brushRef.current,
-            palettes[config.palette].colors,
-            config.intensity,
-            config.density,
-          )
+        if (active !== lastPainting) {
+          setPainting(active)
+          lastPainting = active
+        }
 
-          if (newMarks.length > 0) {
-            for (const mark of newMarks) {
-              drawPaintMark(
-                layerCtx,
-                mark,
-                width,
-                height,
-              )
-            }
+        lastAudioTime = songTime
+      } else {
+        lastAudioTime = null
+        smoothedLevel = 0
 
-            const count =
-              directorRef.current.marks.length
-
-            if (count % 10 < newMarks.length) {
-              setMarkCount(count)
-            }
-          }
+        if (lastPainting) {
+          setPainting(false)
+          lastPainting = false
         }
       }
 
       if (width > 0 && height > 0) {
         ctx.clearRect(0, 0, width, height)
-
-        ctx.drawImage(
-          layer,
-          0,
-          0,
-          width,
-          height,
-        )
+        ctx.drawImage(layer, 0, 0, width, height)
       }
 
       animation = requestAnimationFrame(render)
@@ -309,20 +274,15 @@ export default function PaintingCanvas({
       observer.disconnect()
       layerRef.current = null
     }
-  }, [canvasRef, analyserRef])
+  }, [canvasRef, audioRef])
 
-  const exportAtResolution = (
-    width: number,
-    height: number,
-  ) => {
+  exportRef.current = (width, height) => {
     exportArtwork(
       directorRef.current.marks,
       width,
       height,
     )
   }
-
-  exportRef.current = exportAtResolution
 
   const controlStyle = {
     border: '1px solid rgba(180,166,201,0.28)',
@@ -338,16 +298,18 @@ export default function PaintingCanvas({
       <div className="canvas-top">
         <span>
           <span className="tiny-square" />
-          AUTO PAINT STUDIO
+          VOCAL PAINT STUDIO
         </span>
 
         <span className="canvas-state">
           <span className="state-circle" />
-          {playing
-            ? 'PAINTING THE MUSIC'
-            : song
-              ? 'ARTWORK READY'
-              : 'AWAITING A SONG'}
+          {painting
+            ? 'PAINTING THE VOICE'
+            : playing
+              ? 'LISTENING FOR VOCALS'
+              : vocalAnalysis
+                ? 'READY TO PAINT'
+                : 'AWAITING ANALYSIS'}
         </span>
       </div>
 
@@ -355,11 +317,10 @@ export default function PaintingCanvas({
         style={{
           display: 'flex',
           alignItems: 'center',
+          flexWrap: 'wrap',
           gap: 10,
           padding: '12px 16px',
-          flexWrap: 'wrap',
-          borderBottom:
-            '1px solid rgba(180,166,201,0.15)',
+          borderBottom: '1px solid rgba(180,166,201,0.15)',
         }}
       >
         <label
@@ -371,37 +332,45 @@ export default function PaintingCanvas({
           }}
         >
           Brush style
-
           <select
-            aria-label="Auto paint brush"
+            aria-label="Vocal brush style"
             value={brush}
             onChange={(event) =>
-              setBrush(
-                event.target.value as AutoBrush,
-              )
+              setBrush(event.target.value as AutoBrush)
             }
             style={controlStyle}
           >
-            <option value="surprise">
-              Surprise Mix
-            </option>
-
-            <option value="block">
-              Solid Block
-            </option>
-
-            <option value="paint">
-              Paintbrush
-            </option>
-
-            <option value="hair">
-              Hair Pen
-            </option>
-
-            <option value="glow">
-              Soft Glow
-            </option>
+            <option value="surprise">Surprise Mix</option>
+            <option value="block">Solid Block</option>
+            <option value="paint">Paintbrush</option>
+            <option value="hair">Hair Pen</option>
+            <option value="glow">Soft Glow</option>
           </select>
+        </label>
+
+        <label
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 12,
+          }}
+        >
+          Sensitivity
+          <input
+            aria-label="Vocal sensitivity"
+            type="range"
+            min={10}
+            max={100}
+            value={sensitivity}
+            onChange={(event) =>
+              setSensitivity(Number(event.target.value))
+            }
+            style={{
+              width: 90,
+              accentColor: '#b58bdf',
+            }}
+          />
         </label>
 
         <button
@@ -409,10 +378,10 @@ export default function PaintingCanvas({
           onClick={resetArtwork}
           style={{
             ...controlStyle,
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 7,
             cursor: 'pointer',
+            display: 'inline-flex',
+            gap: 7,
+            alignItems: 'center',
           }}
         >
           <RefreshCcw size={15} />
@@ -422,15 +391,13 @@ export default function PaintingCanvas({
         <button
           type="button"
           onClick={onExportClick}
-          disabled={!song}
+          disabled={!song || strokeCount === 0}
           style={{
             ...controlStyle,
+            cursor: 'pointer',
             display: 'inline-flex',
-            alignItems: 'center',
             gap: 7,
-            cursor: song
-              ? 'pointer'
-              : 'not-allowed',
+            alignItems: 'center',
           }}
         >
           <Download size={15} />
@@ -441,23 +408,20 @@ export default function PaintingCanvas({
       <div className="canvas-wrap">
         <canvas
           ref={canvasRef}
-          aria-label="Automatically generated abstract music artwork"
-          style={{
-            pointerEvents: 'none',
-          }}
+          aria-label="Vocal-driven continuous abstract artwork"
+          style={{ pointerEvents: 'none' }}
         />
 
-        {!song && (
+        {!vocalAnalysis && (
           <div
             className="canvas-overlay"
             style={{ pointerEvents: 'none' }}
           >
-            <span className="canvas-ornament">
-              ✦
-            </span>
-
+            <span className="canvas-ornament">✦</span>
             <span>
-              YOUR SONG BECOMES ART HERE
+              {song
+                ? 'ANALYZING YOUR SONG'
+                : 'YOUR SONG BECOMES ART HERE'}
             </span>
           </div>
         )}
@@ -466,13 +430,13 @@ export default function PaintingCanvas({
       <div className="canvas-footer">
         <span>
           <Sparkles size={14} />
-
-          {playing
-            ? 'Your music is creating something unique.'
-            : 'Press Play and let the music paint.'}
+          {painting
+            ? 'A vocal phrase is becoming a brush stroke.'
+            : vocalAnalysis
+              ? 'Press Play and let the voice paint.'
+              : 'Upload one song to begin.'}
         </span>
-
-        <span>{markCount} MARKS</span>
+        <span>{strokeCount} STROKES</span>
       </div>
     </section>
   )

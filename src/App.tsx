@@ -1,5 +1,6 @@
 
 import { useRef, useState } from 'react'
+
 import {
   ArrowDownToLine,
   Image,
@@ -8,27 +9,24 @@ import {
   Play,
   SlidersHorizontal,
   UploadCloud,
-  Volume2,
   X,
 } from 'lucide-react'
 
 import { useAudioPlayer } from './hooks/useAudioPlayer'
+import { useVocalAnalysis } from './hooks/useVocalAnalysis'
+import { palettes } from './lib/palettes'
 
 import Header from './components/layout/Header'
 import AboutModal from './components/ui/AboutModal'
-import PaintingControls from './components/studio/PaintingControls'
 import PaintingCanvas from './components/studio/PaintingCanvas'
 import ExportStudio from './components/studio/ExportStudio'
 
 const formatTime = (value: number) => {
   if (!Number.isFinite(value)) return '0:00'
 
-  const minutes = Math.floor(value / 60)
-  const seconds = String(
+  return `${Math.floor(value / 60)}:${String(
     Math.floor(value % 60),
-  ).padStart(2, '0')
-
-  return `${minutes}:${seconds}`
+  ).padStart(2, '0')}`
 }
 
 export default function App() {
@@ -41,14 +39,13 @@ export default function App() {
   const [exportOpen, setExportOpen] = useState(false)
   const [palette, setPalette] = useState(0)
   const [intensity, setIntensity] = useState(65)
-  const [density, setDensity] = useState(65)
   const [help, setHelp] = useState(false)
 
   const {
     audioRef,
     inputRef,
-    analyserRef,
     song,
+    sourceFile,
     playing,
     current,
     duration,
@@ -63,16 +60,11 @@ export default function App() {
     handleAudioError,
   } = useAudioPlayer()
 
-  const openExportStudio = () => {
-    if (!song) return
-    setExportOpen(true)
-  }
+  const vocalAnalysis = useVocalAnalysis(sourceFile)
+  const ready = vocalAnalysis.status === 'ready'
 
-  const handleExport = (
-    width: number,
-    height: number,
-  ) => {
-    exportRef.current?.(width, height)
+  const openExportStudio = () => {
+    if (song && ready) setExportOpen(true)
   }
 
   return (
@@ -92,15 +84,14 @@ export default function App() {
             </h1>
 
             <p>
-              Every song tells a story.
-              Let yours become a work of art.
+              Upload one song. Let its voice become art.
             </p>
           </div>
 
           <button
             type="button"
             className="export-button"
-            disabled={!song}
+            disabled={!ready}
             onClick={openExportStudio}
           >
             <ArrowDownToLine size={17} />
@@ -111,24 +102,24 @@ export default function App() {
         <div className="studio-grid">
           <PaintingCanvas
             canvasRef={canvasRef}
-            analyserRef={analyserRef}
+            audioRef={audioRef}
             exportRef={exportRef}
             onExportClick={openExportStudio}
             song={song}
             playing={playing}
-            current={current}
+            vocalAnalysis={vocalAnalysis.data}
             palette={palette}
             intensity={intensity}
-            density={density}
           />
 
           <aside className="controls-panel">
             <div className="panel-header">
               <span className="section-number">01</span>
-
               <div>
                 <h2>Your music</h2>
-                <p>Choose a song. Watch it become art.</p>
+                <p>
+                  One song is all you need.
+                </p>
               </div>
             </div>
 
@@ -152,15 +143,13 @@ export default function App() {
               </span>
 
               <strong>
-                {song
-                  ? 'Change your song'
-                  : 'Drop into the rhythm'}
+                {song ? 'Change your song' : 'Upload your song'}
               </strong>
 
               <span>
                 {song
                   ? 'Choose another audio file'
-                  : 'Click to upload an audio file'}
+                  : 'Choose a song to turn into art'}
               </span>
 
               <small>
@@ -176,7 +165,7 @@ export default function App() {
 
                 <div className="track-info">
                   <strong title={song}>{song}</strong>
-                  <span>Local audio file</span>
+                  <span>Original audio</span>
                 </div>
 
                 <button
@@ -192,6 +181,59 @@ export default function App() {
               </div>
             )}
 
+            {song && (
+              <div
+                role="status"
+                aria-live="polite"
+                style={{
+                  marginTop: 14,
+                  padding: 12,
+                  borderRadius: 10,
+                  background: '#211c2b',
+                  color: '#cfc1dc',
+                  fontSize: 12,
+                  lineHeight: 1.6,
+                }}
+              >
+                {vocalAnalysis.status === 'loading' && (
+                  <>Preparing your song for analysis…</>
+                )}
+
+                {vocalAnalysis.status === 'processing' && (
+                  <>
+                    <strong>Separating vocals automatically</strong>
+                    <div>
+                      Processing: {vocalAnalysis.progress}%
+                    </div>
+                    <progress
+                      max={100}
+                      value={vocalAnalysis.progress}
+                      style={{ width: '100%', marginTop: 7 }}
+                    />
+                  </>
+                )}
+
+                {ready && (
+                  <>
+                    <strong>Vocals analyzed</strong>
+                    <div>
+                      Press Play. Your singer will guide the brush.
+                    </div>
+                  </>
+                )}
+
+                {vocalAnalysis.status === 'error' && (
+                  <>
+                    <strong>Could not analyze vocals</strong>
+                    <div>{vocalAnalysis.error}</div>
+                    <div>
+                      Try another audio file or supported browser.
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             <audio
               ref={audioRef}
               onTimeUpdate={handleTimeUpdate}
@@ -204,19 +246,14 @@ export default function App() {
               <button
                 type="button"
                 className="play"
+                disabled={!ready}
                 onClick={togglePlayback}
                 aria-label={playing ? 'Pause' : 'Play'}
               >
                 {playing ? (
-                  <Pause
-                    fill="currentColor"
-                    size={18}
-                  />
+                  <Pause fill="currentColor" size={18} />
                 ) : (
-                  <Play
-                    fill="currentColor"
-                    size={18}
-                  />
+                  <Play fill="currentColor" size={18} />
                 )}
               </button>
 
@@ -237,11 +274,6 @@ export default function App() {
                   <span>{formatTime(duration)}</span>
                 </div>
               </div>
-
-              <Volume2
-                size={18}
-                className="speaker"
-              />
             </div>
 
             {error && (
@@ -254,28 +286,57 @@ export default function App() {
 
             <div className="panel-header">
               <span className="section-number">02</span>
-
               <div>
                 <h2>Shape the mood</h2>
-
                 <p>
-                  Set the colors and expression of your artwork.
+                  Choose the feeling of the final painting.
                 </p>
               </div>
             </div>
 
-            <PaintingControls
-              palette={palette}
-              intensity={intensity}
-              density={density}
-              onPaletteChange={setPalette}
-              onIntensityChange={setIntensity}
-              onDensityChange={setDensity}
-              onReset={() => {
-                setPalette(0)
-                setIntensity(65)
-                setDensity(65)
-              }}
+            <div className="control-title">
+              <span>Color palette</span>
+              <span className="muted-value">
+                {palettes[palette].name}
+              </span>
+            </div>
+
+            <div className="palette-choices">
+              {palettes.map((item, index) => (
+                <button
+                  key={item.name}
+                  type="button"
+                  title={item.name}
+                  aria-label={item.name}
+                  aria-pressed={palette === index}
+                  className={`palette-choice ${palette === index ? 'chosen' : ''
+                    }`}
+                  onClick={() => setPalette(index)}
+                  style={{
+                    background:
+                      `linear-gradient(120deg, ${item.colors.join(', ')})`,
+                  }}
+                />
+              ))}
+            </div>
+
+            <div className="control-title">
+              <span>Brush intensity</span>
+              <span className="muted-value">
+                {intensity}%
+              </span>
+            </div>
+
+            <input
+              className="setting-range"
+              aria-label="Brush intensity"
+              type="range"
+              min={10}
+              max={100}
+              value={intensity}
+              onChange={(event) =>
+                setIntensity(Number(event.target.value))
+              }
             />
           </aside>
         </div>
@@ -288,22 +349,22 @@ export default function App() {
 
           <span>
             <SlidersHorizontal size={13} />
-            AUTO PAINT STUDIO
+            VOCAL PAINT STUDIO
             <Image size={13} />
           </span>
         </footer>
       </main>
 
       {help && (
-        <AboutModal
-          onClose={() => setHelp(false)}
-        />
+        <AboutModal onClose={() => setHelp(false)} />
       )}
 
-      {exportOpen && song && (
+      {exportOpen && ready && (
         <ExportStudio
           onClose={() => setExportOpen(false)}
-          onExport={handleExport}
+          onExport={(width, height) =>
+            exportRef.current?.(width, height)
+          }
         />
       )}
     </div>
