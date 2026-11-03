@@ -9,12 +9,13 @@ import type { AutoBrush } from '../../lib/autoPainter'
 import {
   createPaintDirector,
   advanceVocalPainter,
-  drawPaintSegment,
-  renderAutoArtwork,
 } from '../../lib/autoPainter'
 
 import { palettes } from '../../lib/palettes'
 import { exportArtwork } from '../../lib/exportArtwork'
+import { drawMirroredSegment, renderMirroredArtwork } from '../../lib/mirror'
+import type { MirrorMode } from '../../lib/mirror'
+
 
 interface PaintingCanvasProps {
   canvasRef: RefObject<HTMLCanvasElement | null>
@@ -41,7 +42,10 @@ export default function PaintingCanvas({
   palette,
   intensity,
 }: PaintingCanvasProps) {
-  const [brush, setBrush] = useState<AutoBrush>('surprise')
+  // SONG_PAINTER_EXPRESSION_V5: source and mirror settings.
+  const [brush, setBrush] = useState<AutoBrush>('paint')
+  const [mirror, setMirror] = useState<MirrorMode>('none')
+  const [sourceMode, setSourceMode] = useState<'vocal' | 'music'>('vocal') // SONG_PAINTER_COMPOSITION_PATCH_V1
   const [sensitivity, setSensitivity] = useState(70)
   const [strokeCount, setStrokeCount] = useState(0)
   const [painting, setPainting] = useState(false)
@@ -62,6 +66,8 @@ export default function PaintingCanvas({
     sensitivity,
     palette,
     intensity,
+    mirror,
+    sourceMode,
   })
 
   configRef.current = {
@@ -71,6 +77,8 @@ export default function PaintingCanvas({
     sensitivity,
     palette,
     intensity,
+    mirror,
+    sourceMode,
   }
 
   const redrawLayer = () => {
@@ -86,12 +94,13 @@ export default function PaintingCanvas({
 
     context.setTransform(dpr, 0, 0, dpr, 0, 0)
 
-    renderAutoArtwork(
+    renderMirroredArtwork(
       context,
       width,
       height,
       directorRef.current.marks,
-    )
+        configRef.current.mirror,
+      )
   }
 
   const resetArtwork = () => {
@@ -105,7 +114,7 @@ export default function PaintingCanvas({
   // always starts with a fresh canvas.
   useEffect(() => {
     resetArtwork()
-  }, [song, vocalAnalysis])
+  }, [song, mirror, sourceMode])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -156,11 +165,12 @@ export default function PaintingCanvas({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       layerCtx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
-      renderAutoArtwork(
+      renderMirroredArtwork(
         layerCtx,
         width,
         height,
         directorRef.current.marks,
+        configRef.current.mirror,
       )
     }
 
@@ -183,15 +193,17 @@ export default function PaintingCanvas({
       ) {
         const songTime = audio.currentTime
 
-        const frame = Math.min(
-          config.vocalAnalysis.levels.length - 1,
-          Math.floor(
-            songTime * config.vocalAnalysis.framesPerSecond,
-          ),
-        )
+        const frame = Math.floor(songTime * config.vocalAnalysis.framesPerSecond)
+        const levels = config.sourceMode === 'music'
+          ? (config.vocalAnalysis.musicLevels ?? config.vocalAnalysis.levels)
+          : config.vocalAnalysis.levels
+        // Outside the analyzed preview there is NO vocal data, not the last frame.
+        const level = frame >= 0 && frame < levels.length ? levels[frame] : 0
 
-        const level = frame >= 0
-          ? config.vocalAnalysis.levels[frame]
+        // SONG_PAINTER_PITCH_V4: pitches share the same time axis as the vocal levels.
+        const pitches = config.vocalAnalysis.pitches
+        const pitch = config.sourceMode === 'vocal' && pitches && frame >= 0 && frame < pitches.length
+          ? pitches[frame]
           : 0
 
         const elapsed = lastAudioTime === null
@@ -203,7 +215,7 @@ export default function PaintingCanvas({
         // parts of the song with one line.
         if (elapsed < -100 || elapsed > 500) {
           directorRef.current = createPaintDirector()
-          renderAutoArtwork(layerCtx, width, height, [])
+          renderMirroredArtwork(layerCtx, width, height, [], config.mirror)
           setStrokeCount(0)
           smoothedLevel = 0
           lastPainting = false
@@ -213,9 +225,10 @@ export default function PaintingCanvas({
           ? 16.667
           : Math.max(0, Math.min(80, elapsed))
 
-        smoothedLevel +=
-          (level - smoothedLevel) *
-          (1 - Math.exp(-dt / 65))
+        // SONG_PAINTER_PHRASE_V2: preserve short silences rather than
+        // smoothing them into the next phrase. The painter itself
+        // applies hysteresis and a 110ms gap tolerance.
+        smoothedLevel = level
 
         const update = advanceVocalPainter(
           directorRef.current,
@@ -225,15 +238,12 @@ export default function PaintingCanvas({
           palettes[config.palette].colors,
           config.intensity,
           config.sensitivity,
+        pitch,
         )
 
         for (const segment of update.segments) {
-          drawPaintSegment(
-            layerCtx,
-            segment.mark,
-            segment.index,
-            width,
-            height,
+          drawMirroredSegment(
+            layerCtx, segment.mark, segment.index, width, height, config.mirror,
           )
         }
 
@@ -281,6 +291,7 @@ export default function PaintingCanvas({
       directorRef.current.marks,
       width,
       height,
+    configRef.current.mirror,
     )
   }
 
@@ -348,7 +359,28 @@ export default function PaintingCanvas({
           </select>
         </label>
 
-        <label
+        
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+          Source
+          <select aria-label="Painting source" value={sourceMode}
+            onChange={(event) => setSourceMode(event.target.value as 'vocal' | 'music')}
+            style={controlStyle}>
+            <option value="vocal">Vocals</option>
+            <option value="music">Music / accompaniment</option>
+          </select>
+        </label>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+          Mirror
+          <select aria-label="Canvas mirror mode" value={mirror}
+            onChange={(event) => setMirror(event.target.value as MirrorMode)}
+            style={controlStyle}>
+            <option value="none">None</option>
+            <option value="vertical">Side by side</option>
+            <option value="horizontal">Top / bottom</option>
+            <option value="quad">Four quadrants</option>
+          </select>
+        </label>
+<label
           style={{
             display: 'inline-flex',
             alignItems: 'center',

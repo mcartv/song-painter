@@ -61,10 +61,32 @@ export default function App() {
   } = useAudioPlayer()
 
   const vocalAnalysis = useVocalAnalysis(sourceFile)
-  const ready = vocalAnalysis.status === 'ready'
+
+  // SONG_PAINTER_FULL_SONG_V6: playable after the first analyzed chunk.
+  const ready = Boolean(song) && vocalAnalysis.data !== null
+
+  const analyzing =
+    vocalAnalysis.status === 'loading' ||
+    vocalAnalysis.status === 'processing'
 
   const openExportStudio = () => {
-    if (song && ready) setExportOpen(true)
+    if (ready) {
+      setExportOpen(true)
+    }
+  }
+
+  const handleRemoveSong = () => {
+    vocalAnalysis.cancel()
+    removeSong()
+    setExportOpen(false)
+  }
+
+  const handleUpload = (file?: File) => {
+    if (!file) return
+
+    vocalAnalysis.cancel()
+    loadFile(file)
+    setExportOpen(false)
   }
 
   return (
@@ -115,11 +137,10 @@ export default function App() {
           <aside className="controls-panel">
             <div className="panel-header">
               <span className="section-number">01</span>
+
               <div>
                 <h2>Your music</h2>
-                <p>
-                  One song is all you need.
-                </p>
+                <p>One song is all you need.</p>
               </div>
             </div>
 
@@ -129,7 +150,7 @@ export default function App() {
               type="file"
               accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac"
               onChange={(event) =>
-                loadFile(event.target.files?.[0])
+                handleUpload(event.target.files?.[0])
               }
             />
 
@@ -143,7 +164,9 @@ export default function App() {
               </span>
 
               <strong>
-                {song ? 'Change your song' : 'Upload your song'}
+                {song
+                  ? 'Change your song'
+                  : 'Upload your song'}
               </strong>
 
               <span>
@@ -164,16 +187,15 @@ export default function App() {
                 </div>
 
                 <div className="track-info">
-                  <strong title={song}>{song}</strong>
+                  <strong title={song}>
+                    {song}
+                  </strong>
                   <span>Original audio</span>
                 </div>
 
                 <button
                   type="button"
-                  onClick={() => {
-                    removeSong()
-                    setExportOpen(false)
-                  }}
+                  onClick={handleRemoveSong}
                   aria-label="Remove song"
                 >
                   <X size={16} />
@@ -195,41 +217,81 @@ export default function App() {
                   lineHeight: 1.6,
                 }}
               >
+                {vocalAnalysis.status === 'idle' && (
+                  <span>
+                    Vocal analysis is not running.
+                  </span>
+                )}
+
                 {vocalAnalysis.status === 'loading' && (
-                  <>Preparing your song for analysis…</>
+                  <span>
+                    Preparing audio for vocal analysis...
+                  </span>
                 )}
 
                 {vocalAnalysis.status === 'processing' && (
                   <>
-                    <strong>Separating vocals automatically</strong>
-                    <div>
-                      Processing: {vocalAnalysis.progress}%
-                    </div>
+                    <strong
+                      style={{
+                        display: 'block',
+                        marginBottom: 8,
+                      }}
+                    >
+                      Separating vocals automatically...
+                    </strong>
+
                     <progress
                       max={100}
                       value={vocalAnalysis.progress}
-                      style={{ width: '100%', marginTop: 7 }}
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                      }}
                     />
+
+                    <span>
+                      {vocalAnalysis.progress}%
+                      {' — '}
+                      Analyzing the complete song in 15-second chunks
+                    </span>
                   </>
                 )}
 
-                {ready && (
-                  <>
-                    <strong>Vocals analyzed</strong>
-                    <div>
-                      Press Play. Your singer will guide the brush.
-                    </div>
-                  </>
+                {vocalAnalysis.status === 'ready' && (
+                  <span>
+                    Vocal analysis complete.
+                    Full-song analysis complete.
+                  </span>
                 )}
 
                 {vocalAnalysis.status === 'error' && (
-                  <>
-                    <strong>Could not analyze vocals</strong>
-                    <div>{vocalAnalysis.error}</div>
-                    <div>
-                      Try another audio file or supported browser.
-                    </div>
-                  </>
+                  <div
+                    role="alert"
+                    style={{ color: '#ffb5ba' }}
+                  >
+                    {vocalAnalysis.error ??
+                      'Vocal analysis failed.'}
+                  </div>
+                )}
+
+                {analyzing && (
+                  <button
+                    type="button"
+                    onClick={vocalAnalysis.cancel}
+                    style={{
+                      display: 'block',
+                      marginTop: 12,
+                      padding: '8px 12px',
+                      borderRadius: 8,
+                      border:
+                        '1px solid rgba(180,166,201,0.3)',
+                      background: '#30283b',
+                      color: '#f1e9fa',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Cancel analysis
+                  </button>
                 )}
               </div>
             )}
@@ -251,9 +313,15 @@ export default function App() {
                 aria-label={playing ? 'Pause' : 'Play'}
               >
                 {playing ? (
-                  <Pause fill="currentColor" size={18} />
+                  <Pause
+                    fill="currentColor"
+                    size={18}
+                  />
                 ) : (
-                  <Play fill="currentColor" size={18} />
+                  <Play
+                    fill="currentColor"
+                    size={18}
+                  />
                 )}
               </button>
 
@@ -264,14 +332,19 @@ export default function App() {
                   min={0}
                   max={duration || 1}
                   value={current}
+                  disabled={!ready}
                   onChange={(event) =>
                     seek(Number(event.target.value))
                   }
                 />
 
                 <div className="timing">
-                  <span>{formatTime(current)}</span>
-                  <span>{formatTime(duration)}</span>
+                  <span>
+                    {formatTime(current)}
+                  </span>
+                  <span>
+                    {formatTime(duration)}
+                  </span>
                 </div>
               </div>
             </div>
@@ -285,7 +358,10 @@ export default function App() {
             <div className="panel-divider" />
 
             <div className="panel-header">
-              <span className="section-number">02</span>
+              <span className="section-number">
+                02
+              </span>
+
               <div>
                 <h2>Shape the mood</h2>
                 <p>
@@ -356,7 +432,9 @@ export default function App() {
       </main>
 
       {help && (
-        <AboutModal onClose={() => setHelp(false)} />
+        <AboutModal
+          onClose={() => setHelp(false)}
+        />
       )}
 
       {exportOpen && ready && (

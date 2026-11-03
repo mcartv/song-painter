@@ -1,11 +1,13 @@
 
 import type { PaintMark } from './autoPainter'
-import { renderAutoArtwork } from './autoPainter'
+import { renderMirroredArtwork } from './mirror'
+import type { MirrorMode } from './mirror'
 
 export function exportArtwork(
     marks: PaintMark[],
     width: number,
     height: number,
+    mirror: MirrorMode = 'none',
 ) {
     if (
         width <= 0 ||
@@ -23,11 +25,12 @@ export function exportArtwork(
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    renderAutoArtwork(
+    renderMirroredArtwork(
         ctx,
         canvas.width,
         canvas.height,
         marks,
+    mirror,
     )
 
     canvas.toBlob((blob) => {
