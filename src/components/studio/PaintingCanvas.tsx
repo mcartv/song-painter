@@ -1,39 +1,38 @@
+
 import { useEffect, useRef, useState } from 'react'
-import type { PointerEvent, RefObject } from 'react'
+import type { RefObject } from 'react'
 import {
   Download,
-  Eraser,
-  Paintbrush,
-  RotateCcw,
+  RefreshCcw,
   Sparkles,
-  Trash2,
 } from 'lucide-react'
 
-import type { PaintingStyle } from '../../types/studio'
 import type { AudioFeatures } from '../../lib/audioAnalyzer'
-import type {
-  BrushMode,
-  BrushPoint,
-  BrushStroke,
-  BrushPreset,
-} from '../../types/brush'
+import type { AutoBrush } from '../../lib/autoPainter'
 
-import { analyzeAudio, SILENT_AUDIO } from '../../lib/audioAnalyzer'
-import { renderPainting } from '../../lib/paintingEngine'
-import { drawBrushStroke } from '../../lib/brushEngine'
+import {
+  analyzeAudio,
+  SILENT_AUDIO,
+} from '../../lib/audioAnalyzer'
+
+import {
+  createPaintDirector,
+  advancePaintDirector,
+  drawArtworkBackground,
+  drawPaintMark,
+  renderAutoArtwork,
+} from '../../lib/autoPainter'
+
 import { palettes } from '../../lib/palettes'
 import { exportArtwork } from '../../lib/exportArtwork'
-import {
-  createVocalBrushState,
-  updateVocalBrush,
-} from '../../lib/vocalBrush'
 
 interface PaintingCanvasProps {
   canvasRef: RefObject<HTMLCanvasElement | null>
   analyserRef: RefObject<AnalyserNode | null>
+  exportRef: RefObject<(() => void) | null>
   song: string | null
   playing: boolean
-  style: PaintingStyle
+  current: number
   palette: number
   intensity: number
   density: number
@@ -42,243 +41,90 @@ interface PaintingCanvasProps {
 export default function PaintingCanvas({
   canvasRef,
   analyserRef,
+  exportRef,
   song,
   playing,
-  style,
+  current,
   palette,
   intensity,
   density,
 }: PaintingCanvasProps) {
-  const [brushSize, setBrushSize] = useState(12)
-  const [brushMode, setBrushMode] = useState<BrushMode>('paint')
-  const [brushPreset, setBrushPreset] =
-    useState<BrushPreset>('glow')
-  const [canvasMode, setCanvasMode] = useState<
-    'visualizer' | 'vocal'
-  >('visualizer')
-  const [strokeCount, setStrokeCount] = useState(0)
-  const [cursor, setCursor] = useState<{
-    x: number
-    y: number
-  } | null>(null)
+  const [brush, setBrush] = useState<AutoBrush>('surprise')
+  const [markCount, setMarkCount] = useState(0)
+
+  const directorRef = useRef(createPaintDirector())
+  const brushRef = useRef(brush)
 
   const configRef = useRef({
-    style,
+    song,
+    playing,
     palette,
     intensity,
     density,
+  })
+
+  const layerRef = useRef<HTMLCanvasElement | null>(null)
+
+  const canvasSizeRef = useRef({
+    width: 0,
+    height: 0,
+    dpr: 1,
+  })
+
+  const lastCurrentRef = useRef(current)
+
+  // Keep animation settings current without restarting the loop.
+  configRef.current = {
+    song,
     playing,
-  })
-
-  const brushRef = useRef({
-    brushSize,
-    brushMode,
-    brushPreset,
-  })
-
-  const canvasModeRef = useRef(canvasMode)
-  const strokesRef = useRef<BrushStroke[]>([])
-  const activeStrokeRef = useRef<BrushStroke | null>(null)
-  const activePointerRef = useRef<number | null>(null)
-  const nextStrokeIdRef = useRef(1)
-  const audioFeaturesRef = useRef<AudioFeatures>({
-    ...SILENT_AUDIO,
-  })
-
-  const lastFrameRef = useRef(0)
-  const paintLayerRef = useRef<HTMLCanvasElement | null>(null)
-  const paintDirtyRef = useRef(true)
-  const canvasSizeRef = useRef({ width: 0, height: 0, dpr: 1 })
-  const vocalBrushRef = useRef(createVocalBrushState(0, 0))
-
-  useEffect(() => {
-    configRef.current = {
-      style,
-      palette,
-      intensity,
-      density,
-      playing,
-    }
-  }, [style, palette, intensity, density, playing])
-
-  useEffect(() => {
-    brushRef.current = {
-      brushSize,
-      brushMode,
-      brushPreset,
-    }
-  }, [brushSize, brushMode, brushPreset])
-
-  useEffect(() => {
-    canvasModeRef.current = canvasMode
-  }, [canvasMode])
-
-  const getPoint = (
-    event: PointerEvent<HTMLCanvasElement>,
-  ): BrushPoint => {
-    const rect = event.currentTarget.getBoundingClientRect()
-
-    return {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-      pressure:
-        event.pointerType === 'mouse'
-          ? 1
-          : event.pressure || 0.5,
-    }
+    palette,
+    intensity,
+    density,
   }
 
-  const changeCanvasMode = (mode: 'visualizer' | 'vocal') => {
-    if (activePointerRef.current !== null) return
+  brushRef.current = brush
 
-    canvasModeRef.current = mode
-    setCanvasMode(mode)
+  const redrawLayer = () => {
+    const layer = layerRef.current
+    if (!layer) return
 
-    strokesRef.current = []
-    activeStrokeRef.current = null
+    const ctx = layer.getContext('2d')
+    if (!ctx) return
 
-    const { width, height } = canvasSizeRef.current
-    vocalBrushRef.current = createVocalBrushState(
+    const { width, height, dpr } = canvasSizeRef.current
+
+    if (width <= 0 || height <= 0) return
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.clearRect(0, 0, width, height)
+
+    renderAutoArtwork(
+      ctx,
       width,
       height,
+      directorRef.current.marks,
     )
-
-    paintDirtyRef.current = true
-    setStrokeCount(0)
-    setCursor(null)
   }
 
-  const updateCursor = (
-    event: PointerEvent<HTMLCanvasElement>,
-  ) => {
-    if (canvasModeRef.current === 'vocal') {
-      setCursor(null)
-      return
-    }
-
-    const point = getPoint(event)
-
-    setCursor({
-      x: point.x,
-      y: point.y,
-    })
+  const resetArtwork = () => {
+    directorRef.current = createPaintDirector()
+    setMarkCount(0)
+    redrawLayer()
   }
 
-  const handlePointerDown = (
-    event: PointerEvent<HTMLCanvasElement>,
-  ) => {
-    if (canvasModeRef.current === 'vocal') return
-    if (activePointerRef.current !== null) return
-    if (
-      event.pointerType === 'mouse' &&
-      event.button !== 0
-    ) {
-      return
+  // A new track starts a new composition.
+  useEffect(() => {
+    resetArtwork()
+  }, [song])
+
+  // Rewinding the track begins a fresh interpretation.
+  useEffect(() => {
+    if (current < lastCurrentRef.current - 2) {
+      resetArtwork()
     }
 
-    const config = configRef.current
-    const brush = brushRef.current
-    const audio = audioFeaturesRef.current
-    const colors = palettes[config.palette].colors
-
-    const boost = config.playing
-      ? 1 + audio.bass * 1.5 + audio.energy * 0.5
-      : 1
-
-    const stroke: BrushStroke = {
-      id: nextStrokeIdRef.current++,
-      points: [getPoint(event)],
-      color: colors[(nextStrokeIdRef.current - 2) % colors.length],
-      size: brush.brushSize * boost,
-      opacity: 0.85,
-      mode: brush.brushMode,
-      preset: brush.brushPreset,
-    }
-
-    activeStrokeRef.current = stroke
-    activePointerRef.current = event.pointerId
-    paintDirtyRef.current = true
-
-    event.currentTarget.setPointerCapture(event.pointerId)
-  }
-
-  const handlePointerMove = (
-    event: PointerEvent<HTMLCanvasElement>,
-  ) => {
-    if (
-      activePointerRef.current !== event.pointerId ||
-      !activeStrokeRef.current
-    ) {
-      return
-    }
-
-    const stroke = activeStrokeRef.current
-    const point = getPoint(event)
-    const last = stroke.points[stroke.points.length - 1]
-
-    if (Math.hypot(point.x - last.x, point.y - last.y) < 1) {
-      return
-    }
-
-    if (stroke.points.length < 3000) {
-      stroke.points.push(point)
-      paintDirtyRef.current = true
-    }
-  }
-
-  const finishStroke = (
-    event: PointerEvent<HTMLCanvasElement>,
-  ) => {
-    if (activePointerRef.current !== event.pointerId) {
-      return
-    }
-
-    if (activeStrokeRef.current) {
-      strokesRef.current.push(activeStrokeRef.current)
-
-      if (strokesRef.current.length > 100) {
-        strokesRef.current.shift()
-      }
-    }
-
-    activeStrokeRef.current = null
-    activePointerRef.current = null
-    paintDirtyRef.current = true
-    setStrokeCount(strokesRef.current.length)
-
-    if (
-      event.currentTarget.hasPointerCapture(event.pointerId)
-    ) {
-      event.currentTarget.releasePointerCapture(
-        event.pointerId,
-      )
-    }
-  }
-
-  const undoStroke = () => {
-    if (activePointerRef.current !== null) return
-
-    if (canvasModeRef.current === 'vocal') {
-      vocalBrushRef.current.active = null
-      vocalBrushRef.current.heldSince = null
-    }
-
-    strokesRef.current.pop()
-    setStrokeCount(strokesRef.current.length)
-    paintDirtyRef.current = true
-  }
-
-  const clearStrokes = () => {
-    if (activePointerRef.current !== null) return
-
-    strokesRef.current = []
-    setStrokeCount(0)
-
-    const { width, height } = canvasSizeRef.current
-    vocalBrushRef.current = createVocalBrushState(width, height)
-
-    paintDirtyRef.current = true
-  }
+    lastCurrentRef.current = current
+  }, [current])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -287,74 +133,65 @@ export default function PaintingCanvas({
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    const paintLayer = document.createElement('canvas')
-    const paintCtx = paintLayer.getContext('2d')
-    if (!paintCtx) return
+    const layer = document.createElement('canvas')
+    const layerCtx = layer.getContext('2d')
 
-    paintLayerRef.current = paintLayer
+    if (!layerCtx) return
+
+    layerRef.current = layer
 
     let animation = 0
-    let frame = 0
     let lastTime = 0
+
     let frequencyData: Uint8Array<ArrayBuffer> | null = null
-    let smoothed: AudioFeatures = { ...SILENT_AUDIO }
+
+    let smoothed: AudioFeatures = {
+      ...SILENT_AUDIO,
+    }
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect()
-      const dpr = Math.min(window.devicePixelRatio || 1, 2)
+
+      const width = rect.width
+      const height = rect.height
+
+      if (width <= 0 || height <= 0) return
+
+      const dpr = Math.min(
+        window.devicePixelRatio || 1,
+        2,
+      )
 
       const previous = canvasSizeRef.current
 
       if (
-        previous.width > 0 &&
-        previous.height > 0 &&
-        (previous.width !== rect.width ||
-          previous.height !== rect.height)
+        previous.width === width &&
+        previous.height === height &&
+        previous.dpr === dpr
       ) {
-        const scaleX = rect.width / previous.width
-        const scaleY = rect.height / previous.height
-
-        const resizeStroke = (stroke: BrushStroke) => {
-          for (const point of stroke.points) {
-            point.x *= scaleX
-            point.y *= scaleY
-          }
-        }
-
-        for (const stroke of strokesRef.current) {
-          resizeStroke(stroke)
-        }
-
-        if (activeStrokeRef.current) {
-          resizeStroke(activeStrokeRef.current)
-        }
-
-        const vocal = vocalBrushRef.current
-        vocal.x *= scaleX
-        vocal.y *= scaleY
-        vocal.targetX *= scaleX
-        vocal.targetY *= scaleY
-
-        if (vocal.active) {
-          resizeStroke(vocal.active)
-        }
+        return
       }
 
       canvasSizeRef.current = {
-        width: rect.width,
-        height: rect.height,
+        width,
+        height,
         dpr,
       }
 
-      canvas.width = Math.round(rect.width * dpr)
-      canvas.height = Math.round(rect.height * dpr)
+      canvas.width = Math.round(width * dpr)
+      canvas.height = Math.round(height * dpr)
 
-      paintLayer.width = canvas.width
-      paintLayer.height = canvas.height
+      layer.width = canvas.width
+      layer.height = canvas.height
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      paintCtx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      paintDirtyRef.current = true
+      layerCtx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+      drawArtworkBackground(layerCtx, width, height)
+
+      for (const mark of directorRef.current.marks) {
+        drawPaintMark(layerCtx, mark, width, height)
+      }
     }
 
     resize()
@@ -366,134 +203,88 @@ export default function PaintingCanvas({
       const config = configRef.current
       const { width, height } = canvasSizeRef.current
 
-      const delta = lastTime
-        ? Math.min((timestamp - lastTime) / 16.667, 3)
-        : 1
+      const dt = lastTime
+        ? Math.min(timestamp - lastTime, 100)
+        : 16.667
 
       lastTime = timestamp
 
-      if (config.playing) {
-        frame += delta
-      }
+      if (
+        config.song &&
+        config.playing &&
+        width > 0 &&
+        height > 0
+      ) {
+        const analyser = analyserRef.current
 
-      const analyser = analyserRef.current
-      let features = SILENT_AUDIO
-
-      if (analyser && config.playing) {
-        if (
-          !frequencyData ||
-          frequencyData.length !== analyser.frequencyBinCount
-        ) {
-          frequencyData = new Uint8Array(
-            analyser.frequencyBinCount,
-          )
-        }
-
-        features = analyzeAudio(analyser, frequencyData)
-      }
-
-      const smoothing = 1 - Math.pow(0.82, delta)
-
-      smoothed = {
-        bass:
-          smoothed.bass +
-          (features.bass - smoothed.bass) * smoothing,
-        mid:
-          smoothed.mid +
-          (features.mid - smoothed.mid) * smoothing,
-        treble:
-          smoothed.treble +
-          (features.treble - smoothed.treble) * smoothing,
-        energy:
-          smoothed.energy +
-          (features.energy - smoothed.energy) * smoothing,
-      }
-
-      audioFeaturesRef.current = smoothed
-
-      if (canvasModeRef.current === 'vocal') {
-        const vocal = updateVocalBrush(
-          vocalBrushRef.current,
-          config.playing ? smoothed : SILENT_AUDIO,
-          timestamp,
-          width,
-          height,
-          palettes[config.palette].colors,
-          config.intensity,
-        )
-
-        if (vocal.changed) {
-          paintDirtyRef.current = true
-        }
-
-        if (vocal.finished) {
-          strokesRef.current.push(vocal.finished)
-
-          if (strokesRef.current.length > 100) {
-            strokesRef.current.shift()
+        if (analyser) {
+          if (
+            !frequencyData ||
+            frequencyData.length !== analyser.frequencyBinCount
+          ) {
+            frequencyData = new Uint8Array(
+              analyser.frequencyBinCount,
+            )
           }
 
-          setStrokeCount(strokesRef.current.length)
-        }
-      }
-
-      ctx.clearRect(0, 0, width, height)
-      ctx.fillStyle = '#111016'
-      ctx.fillRect(0, 0, width, height)
-
-      const bg = ctx.createRadialGradient(
-        width * 0.5,
-        height * 0.48,
-        2,
-        width * 0.5,
-        height * 0.48,
-        Math.max(width, height) * 0.57,
-      )
-
-      bg.addColorStop(0, '#262131')
-      bg.addColorStop(0.6, '#17151f')
-      bg.addColorStop(1, '#111016')
-
-      ctx.fillStyle = bg
-      ctx.fillRect(0, 0, width, height)
-
-      if (canvasModeRef.current === 'visualizer') {
-        renderPainting(config.style, {
-          ctx,
-          width,
-          height,
-          frame,
-          colors: palettes[config.palette].colors,
-          count: Math.round(85 + config.density * 2.5),
-          intensity: config.intensity,
-          playing: config.playing,
-          audio: smoothed,
-        })
-      }
-
-      if (paintDirtyRef.current) {
-        paintCtx.clearRect(0, 0, width, height)
-
-        for (const stroke of strokesRef.current) {
-          drawBrushStroke(paintCtx, stroke)
-        }
-
-        if (activeStrokeRef.current) {
-          drawBrushStroke(paintCtx, activeStrokeRef.current)
-        }
-
-        if (vocalBrushRef.current.active) {
-          drawBrushStroke(
-            paintCtx,
-            vocalBrushRef.current.active,
+          const features = analyzeAudio(
+            analyser,
+            frequencyData,
           )
-        }
 
-        paintDirtyRef.current = false
+          const smoothFactor =
+            1 - Math.exp(-dt / 110)
+
+          smoothed = {
+            bass:
+              smoothed.bass +
+              (features.bass - smoothed.bass) * smoothFactor,
+            mid:
+              smoothed.mid +
+              (features.mid - smoothed.mid) * smoothFactor,
+            treble:
+              smoothed.treble +
+              (features.treble - smoothed.treble) * smoothFactor,
+            energy:
+              smoothed.energy +
+              (features.energy - smoothed.energy) *
+              smoothFactor,
+          }
+
+          const newMarks = advancePaintDirector(
+            directorRef.current,
+            dt,
+            smoothed,
+            brushRef.current,
+            palettes[config.palette].colors,
+            config.intensity,
+            config.density,
+          )
+
+          if (newMarks.length) {
+            for (const mark of newMarks) {
+              drawPaintMark(
+                layerCtx,
+                mark,
+                width,
+                height,
+              )
+            }
+
+            const count = directorRef.current.marks.length
+
+            if (count % 10 < newMarks.length) {
+              setMarkCount(count)
+            }
+          }
+        }
       }
 
-      ctx.drawImage(paintLayer, 0, 0, width, height)
-      lastFrameRef.current = frame
+      if (width > 0 && height > 0) {
+        ctx.clearRect(0, 0, width, height)
+        ctx.drawImage(layer, 0, 0, width, height)
+      }
+
       animation = requestAnimationFrame(render)
     }
 
@@ -502,7 +293,7 @@ export default function PaintingCanvas({
     return () => {
       cancelAnimationFrame(animation)
       observer.disconnect()
-      paintLayerRef.current = null
+      layerRef.current = null
     }
   }, [canvasRef, analyserRef])
 
@@ -511,69 +302,61 @@ export default function PaintingCanvas({
     if (!canvas) return
 
     const rect = canvas.getBoundingClientRect()
-    const config = configRef.current
 
-    exportArtwork({
-      width: rect.width,
-      height: rect.height,
-      scale: 2,
-      style: config.style,
-      palette: config.palette,
-      intensity: config.intensity,
-      density: config.density,
-      playing: config.playing,
-      frame: lastFrameRef.current,
-      audio: audioFeaturesRef.current,
-      blankCanvas: canvasModeRef.current === 'vocal',
-      strokes: [
-        ...strokesRef.current,
-        ...(activeStrokeRef.current
-          ? [activeStrokeRef.current]
-          : []),
-        ...(vocalBrushRef.current.active
-          ? [vocalBrushRef.current.active]
-          : []),
-      ],
-    })
+    // Default HD export for this milestone.
+    // Custom resolutions come in the Export Studio milestone.
+    const scale = Math.min(
+      2,
+      4096 / Math.max(rect.width, rect.height),
+    )
+
+    exportArtwork(
+      directorRef.current.marks,
+      Math.round(rect.width * scale),
+      Math.round(rect.height * scale),
+    )
   }
 
-  const toolButton = (selected: boolean) => ({
-    border: '1px solid rgba(180, 166, 201, 0.28)',
-    background: selected
-      ? 'rgba(180, 142, 231, 0.23)'
-      : 'transparent',
-    color: 'inherit',
+  // Allows the main header's Export button to use
+  // the same HD export as the canvas toolbar.
+  exportRef.current = saveHD
+
+  const controlStyle = {
+    border: '1px solid rgba(180,166,201,0.28)',
     borderRadius: 10,
-    padding: '8px 12px',
-    display: 'inline-flex',
-    alignItems: 'center' as const,
-    justifyContent: 'center' as const,
-    gap: 6,
-    cursor: 'pointer',
+    background: '#211c2b',
+    color: '#f1e9fa',
+    padding: '9px 12px',
     fontSize: 12,
-    opacity: 1,
-  })
+  }
 
   return (
     <section className="canvas-panel">
       <div className="canvas-top">
         <span>
-          <span className="tiny-square" /> LIVE CANVAS
+          <span className="tiny-square" />
+          AUTO PAINT STUDIO
         </span>
+
         <span className="canvas-state">
           <span className="state-circle" />
-          {playing ? 'REACTIVE' : 'READY TO CREATE'}
+          {playing
+            ? 'PAINTING THE MUSIC'
+            : song
+              ? 'ARTWORK READY'
+              : 'AWAITING A SONG'}
         </span>
       </div>
 
       <div
         style={{
           display: 'flex',
-          flexWrap: 'wrap',
-          gap: 10,
           alignItems: 'center',
+          gap: 10,
           padding: '12px 16px',
-          borderBottom: '1px solid rgba(180, 166, 201, 0.15)',
+          flexWrap: 'wrap',
+          borderBottom:
+            '1px solid rgba(180,166,201,0.15)',
         }}
       >
         <label
@@ -584,131 +367,49 @@ export default function PaintingCanvas({
             fontSize: 12,
           }}
         >
-          Canvas mode
+          Brush style
           <select
-            aria-label="Canvas mode"
-            value={canvasMode}
-            onChange={(event) =>
-              changeCanvasMode(
-                event.target.value as 'visualizer' | 'vocal',
-              )
-            }
-            style={{
-              border: '1px solid rgba(180,166,201,0.28)',
-              borderRadius: 10,
-              background: '#211c2b',
-              color: '#f1e9fa',
-              padding: '8px 10px',
+            aria-label="Auto paint brush"
+            value={brush}
+            onChange={(event) => {
+              setBrush(event.target.value as AutoBrush)
             }}
+            style={controlStyle}
           >
-            <option value="visualizer">Visualizer</option>
-            <option value="vocal">Vocal Brush</option>
+            <option value="surprise">Surprise Mix</option>
+            <option value="block">Solid Block</option>
+            <option value="paint">Paintbrush</option>
+            <option value="hair">Hair Pen</option>
+            <option value="glow">Soft Glow</option>
           </select>
         </label>
 
         <button
           type="button"
-          aria-label="Paint brush"
-          aria-pressed={brushMode === 'paint'}
-          onClick={() => setBrushMode('paint')}
-          style={toolButton(brushMode === 'paint')}
-          disabled={canvasMode === 'vocal'}
-        >
-          <Paintbrush size={15} /> Brush
-        </button>
-
-        <button
-          type="button"
-          aria-label="Eraser"
-          aria-pressed={brushMode === 'erase'}
-          onClick={() => setBrushMode('erase')}
-          style={toolButton(brushMode === 'erase')}
-          disabled={canvasMode === 'vocal'}
-        >
-          <Eraser size={15} /> Eraser
-        </button>
-
-        <label
+          onClick={resetArtwork}
           style={{
+            ...controlStyle,
             display: 'inline-flex',
             alignItems: 'center',
-            gap: 8,
-            fontSize: 12,
+            gap: 7,
+            cursor: 'pointer',
           }}
         >
-          Preset
-          <select
-            aria-label="Brush preset"
-            value={brushPreset}
-            onChange={(event) =>
-              setBrushPreset(event.target.value as BrushPreset)
-            }
-            disabled={
-              brushMode === 'erase' || canvasMode === 'vocal'
-            }
-            style={{
-              border: '1px solid rgba(180,166,201,0.28)',
-              borderRadius: 10,
-              background: '#211c2b',
-              color: '#f1e9fa',
-              padding: '8px 10px',
-              cursor: 'pointer',
-            }}
-          >
-            <option value="glow">Soft Glow</option>
-            <option value="ink">Ink</option>
-            <option value="particles">Particles</option>
-          </select>
-        </label>
-
-        <label
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            fontSize: 12,
-          }}
-        >
-          Size
-          <input
-            aria-label="Brush size"
-            type="range"
-            min={2}
-            max={48}
-            value={brushSize}
-            onChange={(e) => setBrushSize(Number(e.target.value))}
-            disabled={canvasMode === 'vocal'}
-            style={{ width: 95, accentColor: '#b58bdf' }}
-          />
-          <span style={{ minWidth: 30 }}>{brushSize}px</span>
-        </label>
-
-        <button
-          type="button"
-          onClick={undoStroke}
-          disabled={strokeCount === 0}
-          style={toolButton(false)}
-        >
-          <RotateCcw size={15} /> Undo
-        </button>
-
-        <button
-          type="button"
-          onClick={clearStrokes}
-          disabled={
-            strokeCount === 0 &&
-            !vocalBrushRef.current.active
-          }
-          style={toolButton(false)}
-        >
-          <Trash2 size={15} /> Clear
+          <RefreshCcw size={15} />
+          New canvas
         </button>
 
         <button
           type="button"
           onClick={saveHD}
-          style={toolButton(false)}
-          title="Export high-resolution PNG"
+          disabled={!song}
+          style={{
+            ...controlStyle,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 7,
+            cursor: song ? 'pointer' : 'not-allowed',
+          }}
         >
           <Download size={15} />
           Save HD
@@ -718,76 +419,31 @@ export default function PaintingCanvas({
       <div className="canvas-wrap">
         <canvas
           ref={canvasRef}
-          aria-label="Interactive audio reactive painting canvas"
+          aria-label="Automatically generated abstract music artwork"
           style={{
-            touchAction: 'none',
-            cursor:
-              canvasMode === 'vocal'
-                ? 'default'
-                : brushMode === 'erase'
-                  ? 'cell'
-                  : 'crosshair',
+            pointerEvents: 'none',
           }}
-          onPointerDown={(event) => {
-            updateCursor(event)
-            handlePointerDown(event)
-          }}
-          onPointerMove={(event) => {
-            updateCursor(event)
-            handlePointerMove(event)
-          }}
-          onPointerEnter={updateCursor}
-          onPointerLeave={() => setCursor(null)}
-          onPointerUp={finishStroke}
-          onPointerCancel={finishStroke}
         />
 
-        {cursor && canvasMode === 'visualizer' && (
+        {!song && (
           <div
-            aria-hidden="true"
-            style={{
-              position: 'absolute',
-              left: cursor.x,
-              top: cursor.y,
-              width: brushSize,
-              height: brushSize,
-              border: `1.5px solid ${brushMode === 'erase'
-                  ? '#f5a5a5'
-                  : '#d9b8ff'
-                }`,
-              borderRadius: '50%',
-              transform: 'translate(-50%, -50%)',
-              pointerEvents: 'none',
-              zIndex: 5,
-              boxShadow:
-                '0 0 0 1px rgba(0,0,0,0.35), 0 0 12px rgba(190,150,240,0.2)',
-            }}
-          />
+            className="canvas-overlay"
+            style={{ pointerEvents: 'none' }}
+          >
+            <span className="canvas-ornament">✦</span>
+            <span>YOUR SONG BECOMES ART HERE</span>
+          </div>
         )}
-
-        <div
-          className="canvas-overlay"
-          style={{ pointerEvents: 'none' }}
-        >
-          <span className="canvas-ornament">✦</span>
-          <span>
-            {song
-              ? canvasMode === 'vocal'
-                ? 'VOCAL BRUSH IS LISTENING'
-                : 'PAINTING IN PROGRESS'
-              : 'YOUR CANVAS AWAITS'}
-          </span>
-        </div>
       </div>
 
       <div className="canvas-footer">
         <span>
           <Sparkles size={14} />
-          {canvasMode === 'vocal'
-            ? 'Sustained notes can guide an automatic brush.'
-            : 'Draw along with your music.'}
+          {playing
+            ? 'Your music is creating something unique.'
+            : 'Press Play and let the music paint.'}
         </span>
-        <span>{strokeCount} STROKES</span>
+        <span>{markCount} MARKS</span>
       </div>
     </section>
   )
