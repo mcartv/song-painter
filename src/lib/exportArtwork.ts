@@ -1,4 +1,3 @@
-
 import type { PaintingStyle } from '../types/studio'
 import type { BrushStroke } from '../types/brush'
 import type { AudioFeatures } from './audioAnalyzer'
@@ -19,6 +18,7 @@ interface ExportOptions {
     frame: number
     audio: AudioFeatures
     strokes: BrushStroke[]
+    blankCanvas?: boolean
 }
 
 export function exportArtwork(options: ExportOptions) {
@@ -33,6 +33,7 @@ export function exportArtwork(options: ExportOptions) {
         frame,
         audio,
         strokes,
+        blankCanvas,
     } = options
 
     if (width <= 0 || height <= 0) return
@@ -51,7 +52,6 @@ export function exportArtwork(options: ExportOptions) {
 
     ctx.setTransform(scale, 0, 0, scale, 0, 0)
 
-    // Background
     ctx.fillStyle = '#111016'
     ctx.fillRect(0, 0, width, height)
 
@@ -71,21 +71,20 @@ export function exportArtwork(options: ExportOptions) {
     ctx.fillStyle = bg
     ctx.fillRect(0, 0, width, height)
 
-    // Redraw generative artwork at export resolution.
-    renderPainting(style, {
-        ctx,
-        width,
-        height,
-        frame,
-        colors: palettes[palette].colors,
-        count: Math.round(85 + density * 2.5),
-        intensity,
-        playing,
-        audio,
-    })
+    if (!blankCanvas) {
+        renderPainting(style, {
+            ctx,
+            width,
+            height,
+            frame,
+            colors: palettes[palette].colors,
+            count: Math.round(85 + density * 2.5),
+            intensity,
+            playing,
+            audio,
+        })
+    }
 
-    // Render brush strokes on a separate transparent layer.
-    // This ensures the eraser affects only painted marks.
     const layer = document.createElement('canvas')
     layer.width = canvas.width
     layer.height = canvas.height
