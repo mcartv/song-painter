@@ -1,6 +1,5 @@
 
 import { useRef, useState } from 'react'
-
 import {
   ArrowDownToLine,
   Image,
@@ -19,6 +18,7 @@ import Header from './components/layout/Header'
 import AboutModal from './components/ui/AboutModal'
 import PaintingControls from './components/studio/PaintingControls'
 import PaintingCanvas from './components/studio/PaintingCanvas'
+import ExportStudio from './components/studio/ExportStudio'
 
 const formatTime = (value: number) => {
   if (!Number.isFinite(value)) return '0:00'
@@ -33,8 +33,12 @@ const formatTime = (value: number) => {
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const exportRef = useRef<(() => void) | null>(null)
 
+  const exportRef = useRef<
+    ((width: number, height: number) => void) | null
+  >(null)
+
+  const [exportOpen, setExportOpen] = useState(false)
   const [palette, setPalette] = useState(0)
   const [intensity, setIntensity] = useState(65)
   const [density, setDensity] = useState(65)
@@ -59,6 +63,18 @@ export default function App() {
     handleAudioError,
   } = useAudioPlayer()
 
+  const openExportStudio = () => {
+    if (!song) return
+    setExportOpen(true)
+  }
+
+  const handleExport = (
+    width: number,
+    height: number,
+  ) => {
+    exportRef.current?.(width, height)
+  }
+
   return (
     <div className="app-shell">
       <Header onAboutClick={() => setHelp(true)} />
@@ -82,9 +98,10 @@ export default function App() {
           </div>
 
           <button
+            type="button"
             className="export-button"
             disabled={!song}
-            onClick={() => exportRef.current?.()}
+            onClick={openExportStudio}
           >
             <ArrowDownToLine size={17} />
             Export artwork
@@ -96,6 +113,7 @@ export default function App() {
             canvasRef={canvasRef}
             analyserRef={analyserRef}
             exportRef={exportRef}
+            onExportClick={openExportStudio}
             song={song}
             playing={playing}
             current={current}
@@ -107,11 +125,10 @@ export default function App() {
           <aside className="controls-panel">
             <div className="panel-header">
               <span className="section-number">01</span>
+
               <div>
                 <h2>Your music</h2>
-                <p>
-                  Choose a song. Watch it become art.
-                </p>
+                <p>Choose a song. Watch it become art.</p>
               </div>
             </div>
 
@@ -126,6 +143,7 @@ export default function App() {
             />
 
             <button
+              type="button"
               className="upload-zone"
               onClick={() => inputRef.current?.click()}
             >
@@ -162,7 +180,11 @@ export default function App() {
                 </div>
 
                 <button
-                  onClick={removeSong}
+                  type="button"
+                  onClick={() => {
+                    removeSong()
+                    setExportOpen(false)
+                  }}
                   aria-label="Remove song"
                 >
                   <X size={16} />
@@ -180,6 +202,7 @@ export default function App() {
 
             <div className="player">
               <button
+                type="button"
                 className="play"
                 onClick={togglePlayback}
                 aria-label={playing ? 'Pause' : 'Play'}
@@ -234,9 +257,9 @@ export default function App() {
 
               <div>
                 <h2>Shape the mood</h2>
+
                 <p>
-                  Set the colors and expression
-                  of your artwork.
+                  Set the colors and expression of your artwork.
                 </p>
               </div>
             </div>
@@ -272,7 +295,16 @@ export default function App() {
       </main>
 
       {help && (
-        <AboutModal onClose={() => setHelp(false)} />
+        <AboutModal
+          onClose={() => setHelp(false)}
+        />
+      )}
+
+      {exportOpen && song && (
+        <ExportStudio
+          onClose={() => setExportOpen(false)}
+          onExport={handleExport}
+        />
       )}
     </div>
   )
